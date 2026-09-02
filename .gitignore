@@ -1,0 +1,22 @@
+# Sentinel generates its reports into this folder by default.
+# Reports contain host-specific security posture data — never commit them.
+WindowsSecurityAudit/
+*_checks.csv
+*_physical-disks.csv
+*_storage-pools.csv
+*_virtual-disks.csv
+*_volumes.csv
+*_bitlocker.csv
+*_antivirus.csv
+
+# Real generated reports (keep the sanitised sample in examples/ instead)
+WindowsSecurityAudit_*.html
+WindowsSecurityAudit_*.json
+WindowsSecurityAudit_*.txt
+
+# Editor / OS noise
+.vs/
+.vscode/
+*.bak
+Thumbs.db
+desktop.ini

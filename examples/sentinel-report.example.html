@@ -114,6 +114,16 @@
   .legend b{color:var(--text);font-weight:500}
   .legend .sw{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:6px;vertical-align:middle}
 
+  /* ---- hard fails callout ---- */
+  .hardfails{margin-top:22px;border:1px solid rgba(255,67,104,.4);border-radius:4px;
+    background:linear-gradient(180deg,rgba(255,67,104,.10),rgba(255,67,104,.03));padding:14px 16px}
+  .hardfails h3{margin:0 0 10px;font-family:"Chakra Petch",sans-serif;font-weight:600;font-size:12px;
+    letter-spacing:.16em;text-transform:uppercase;color:var(--fail)}
+  .hf-row{display:flex;align-items:center;gap:12px;padding:5px 0;font-size:13px;color:var(--text)}
+  .hf-row+.hf-row{border-top:1px solid rgba(255,67,104,.14)}
+  .hf-cap{flex:none;min-width:44px;text-align:center;font-family:"Chakra Petch",sans-serif;font-weight:700;
+    color:var(--fail);border:1px solid rgba(255,67,104,.4);border-radius:2px;padding:2px 6px;font-size:12px}
+
   /* ---- filter bar ---- */
   .toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin:26px 0 14px}
   .toolbar .lbl{font-family:"Chakra Petch",sans-serif;font-size:11px;letter-spacing:.24em;color:var(--faint);text-transform:uppercase}
@@ -257,65 +267,314 @@
    In the real script this single object is emitted by:
      $Report | ConvertTo-Json -Depth 10
    and injected here. Everything below renders from it.
-   Sample data = a fairly-hardened Win11 workstation.
+   Injected at export time by New-HtmlReport (from $Report | ConvertTo-Json).
    ============================================================ */
 const REPORT = {
-  ComputerName:"NX-RONIN-01", UserName:"lucy", Administrator:true,
-  GeneratedAt:"2026-09-02T14:22:07",
-  Checks:[
-    {Category:"System", Check:"Operating system", Status:"INFO", Value:"Windows 11 Pro 24H2 (Build 26100.1742)"},
-    {Category:"System", Check:"Hardware", Status:"INFO", Value:"ASUS ROG Strix G16"},
-    {Category:"System", Check:"Processor", Status:"INFO", Value:"Intel Core i9-14900HX"},
-    {Category:"System", Check:"Installed memory", Status:"INFO", Value:"32 GB"},
-    {Category:"System", Check:"Pending reboot", Status:"WARN", Value:"Yes", Expected:"No", Details:"Windows Update; Component Based Servicing"},
-
-    {Category:"Boot Security", Check:"Firmware boot mode", Status:"PASS", Value:"UEFI", Expected:"UEFI"},
-    {Category:"Boot Security", Check:"Secure Boot", Status:"PASS", Value:"Enabled", Expected:"Enabled", Details:"Confirm-SecureBootUEFI"},
-
-    {Category:"TPM", Check:"TPM present", Status:"PASS", Value:"Yes", Expected:"Yes"},
-    {Category:"TPM", Check:"TPM ready", Status:"PASS", Value:"Yes"},
-    {Category:"TPM", Check:"TPM specification", Status:"PASS", Value:"2.0", Expected:"TPM 2.0"},
-    {Category:"TPM", Check:"TPM lockout", Status:"PASS", Value:"Not locked out"},
-
-    {Category:"Storage Health", Check:"Physical disk 0 - Samsung 990 PRO 2TB", Status:"PASS", Value:"Healthy", Details:"SSD; NVMe; 1863.02 GB; OK"},
-    {Category:"Storage Health", Check:"Volume C:", Status:"PASS", Value:"Healthy", Details:"NTFS; 1863.01 GB"},
-    {Category:"Storage Health", Check:"Volume D:", Status:"PASS", Value:"Healthy", Details:"NTFS; 3726.00 GB"},
-
-    {Category:"BitLocker", Check:"OS volume C:", Status:"PASS", Value:"On / 100% (XtsAes256)", Expected:"Encrypted", Details:"Protectors: Tpm, RecoveryPassword"},
-    {Category:"BitLocker", Check:"Data volume D:", Status:"FAIL", Value:"Off / 0%", Expected:"Encrypted", Details:"No key protectors present. Data-at-rest on D: is unprotected if the drive is removed."},
-
-    {Category:"Virtualisation Security", Check:"Virtualization Based Security", Status:"PASS", Value:"Running"},
-    {Category:"Virtualisation Security", Check:"Memory Integrity / HVCI", Status:"WARN", Value:"Configured but not running", Details:"HVCI is configured but the kernel reports it inactive - usually an incompatible driver blocking load. Reboot may be required."},
-    {Category:"Virtualisation Security", Check:"Credential Guard", Status:"PASS", Value:"Running"},
-    {Category:"Virtualisation Security", Check:"System Guard Secure Launch", Status:"INFO", Value:"Not configured"},
-
-    {Category:"Windows Security", Check:"LSA protection (RunAsPPL)", Status:"WARN", Value:"Not enabled", Expected:"Enabled", Details:"Modern Windows 11 may enable LSA protection by default via secure boot; explicit RunAsPPL not detected."},
-
-    {Category:"Antivirus", Check:"Registered product", Status:"INFO", Value:"Microsoft Defender"},
-    {Category:"Antivirus", Check:"Defender running mode", Status:"PASS", Value:"Active"},
-    {Category:"Antivirus", Check:"Real-time protection", Status:"PASS", Value:"Enabled"},
-    {Category:"Antivirus", Check:"Behaviour monitoring", Status:"PASS", Value:"Enabled"},
-    {Category:"Antivirus", Check:"Signature age", Status:"PASS", Value:"0 days"},
-    {Category:"Antivirus", Check:"Tamper Protection", Status:"PASS", Value:"Enabled"},
-
-    {Category:"SMB Security", Check:"SMBv1", Status:"WARN", Value:"Enabled", Expected:"Disabled", Details:"SMBv1 is a legacy protocol vulnerable to worms such as WannaCry/EternalBlue. Remove the client + server feature."},
-    {Category:"SMB Security", Check:"SMBv2/3", Status:"PASS", Value:"Enabled"},
-    {Category:"SMB Security", Check:"Insecure guest logons", Status:"PASS", Value:"Disabled", Expected:"Disabled"},
-
-    {Category:"Remote Access", Check:"Remote Desktop", Status:"INFO", Value:"Disabled"},
-    {Category:"Remote Access", Check:"Windows Firewall - Domain", Status:"PASS", Value:"On"},
-    {Category:"Remote Access", Check:"Windows Firewall - Private", Status:"PASS", Value:"On"},
-    {Category:"Remote Access", Check:"Windows Firewall - Public", Status:"PASS", Value:"On"},
-
-    {Category:"Privilege Security", Check:"UAC", Status:"PASS", Value:"Enabled"},
-    {Category:"Privilege Security", Check:"Admin elevation prompt", Status:"PASS", Value:"Prompt for consent"},
-    {Category:"Privilege Security", Check:"Secure Desktop prompting", Status:"PASS", Value:"Enabled", Expected:"Enabled"}
-  ]
+  "SchemaVersion": "3.0",
+  "GeneratedAt": "2026-09-02T14:55:48.4153686+08:00",
+  "ComputerName": "NX-RONIN-01",
+  "UserName": "operator",
+  "Administrator": true,
+  "Score": 35,
+  "Posture": "AT RISK",
+  "Verdict": "Critical protections are off. This host is a soft target.",
+  "Coverage": 100,
+  "Incomplete": false,
+  "HardFails": [
+    {
+      "Category": "BitLocker",
+      "Check": "OS volume C:",
+      "Cap": 35,
+      "Critical": true
+    }
+  ],
+  "Summary": {
+    "Pass": 24,
+    "Warn": 3,
+    "Fail": 1,
+    "Unknown": 0,
+    "Info": 5
+  },
+  "Checks": [
+    {
+      "Category": "System",
+      "Check": "Operating system",
+      "Status": "INFO",
+      "Value": "Windows 11 Pro 24H2 (Build 26100.1742)",
+      "Expected": "",
+      "Details": ""
+    },
+    {
+      "Category": "System",
+      "Check": "Processor",
+      "Status": "INFO",
+      "Value": "Intel Core i7-1365U",
+      "Expected": "",
+      "Details": ""
+    },
+    {
+      "Category": "System",
+      "Check": "Installed memory",
+      "Status": "INFO",
+      "Value": "32 GB",
+      "Expected": "",
+      "Details": ""
+    },
+    {
+      "Category": "System",
+      "Check": "Pending reboot",
+      "Status": "WARN",
+      "Value": "Yes",
+      "Expected": "No",
+      "Details": "Windows Update"
+    },
+    {
+      "Category": "Boot Security",
+      "Check": "Firmware boot mode",
+      "Status": "PASS",
+      "Value": "UEFI",
+      "Expected": "UEFI",
+      "Details": ""
+    },
+    {
+      "Category": "Boot Security",
+      "Check": "Secure Boot",
+      "Status": "PASS",
+      "Value": "Enabled",
+      "Expected": "Enabled",
+      "Details": ""
+    },
+    {
+      "Category": "TPM",
+      "Check": "TPM present",
+      "Status": "PASS",
+      "Value": "Yes (TPM 2.0)",
+      "Expected": "Yes",
+      "Details": "Detected via Get-Tpm."
+    },
+    {
+      "Category": "TPM",
+      "Check": "TPM specification",
+      "Status": "PASS",
+      "Value": "TPM 2.0",
+      "Expected": "TPM 2.0",
+      "Details": ""
+    },
+    {
+      "Category": "TPM",
+      "Check": "TPM ready",
+      "Status": "PASS",
+      "Value": "Yes",
+      "Expected": "",
+      "Details": ""
+    },
+    {
+      "Category": "Storage Health",
+      "Check": "Physical disk 0 - Samsung 990 PRO 1TB",
+      "Status": "PASS",
+      "Value": "Healthy",
+      "Expected": "",
+      "Details": "SSD; NVMe; 931 GB"
+    },
+    {
+      "Category": "Storage Health",
+      "Check": "Volume C:",
+      "Status": "PASS",
+      "Value": "Healthy",
+      "Expected": "",
+      "Details": "NTFS; 931 GB"
+    },
+    {
+      "Category": "Storage Health",
+      "Check": "Volume D:",
+      "Status": "PASS",
+      "Value": "Healthy",
+      "Expected": "",
+      "Details": "NTFS; 1863 GB"
+    },
+    {
+      "Category": "BitLocker",
+      "Check": "OS volume C:",
+      "Status": "FAIL",
+      "Value": "FullyDecrypted; Protection=Off; 0%; None",
+      "Expected": "Fully encrypted; protection On",
+      "Details": "Operating-system volume is not encrypted. A stolen or lost machine gives up all its data."
+    },
+    {
+      "Category": "BitLocker",
+      "Check": "Data volume D:",
+      "Status": "WARN",
+      "Value": "FullyDecrypted; Protection=Off; 0%; None",
+      "Expected": "Encrypted if sensitive data is stored here",
+      "Details": "Mounted fixed data volume is not encrypted."
+    },
+    {
+      "Category": "Virtualisation Security",
+      "Check": "Virtualization Based Security",
+      "Status": "PASS",
+      "Value": "Running",
+      "Expected": "",
+      "Details": ""
+    },
+    {
+      "Category": "Virtualisation Security",
+      "Check": "Memory Integrity / HVCI",
+      "Status": "PASS",
+      "Value": "Running",
+      "Expected": "",
+      "Details": ""
+    },
+    {
+      "Category": "Virtualisation Security",
+      "Check": "Credential Guard",
+      "Status": "PASS",
+      "Value": "Running",
+      "Expected": "",
+      "Details": ""
+    },
+    {
+      "Category": "Credential Protection",
+      "Check": "LSA protected process configuration",
+      "Status": "PASS",
+      "Value": "Enabled",
+      "Expected": "",
+      "Details": ""
+    },
+    {
+      "Category": "Antivirus",
+      "Check": "Registered security products",
+      "Status": "INFO",
+      "Value": "Microsoft Defender",
+      "Expected": "",
+      "Details": ""
+    },
+    {
+      "Category": "Defender",
+      "Check": "Defender running mode",
+      "Status": "PASS",
+      "Value": "Normal / Active",
+      "Expected": "",
+      "Details": ""
+    },
+    {
+      "Category": "Defender",
+      "Check": "Real-time protection",
+      "Status": "PASS",
+      "Value": "Enabled",
+      "Expected": "",
+      "Details": ""
+    },
+    {
+      "Category": "Defender",
+      "Check": "Behaviour monitoring",
+      "Status": "PASS",
+      "Value": "Enabled",
+      "Expected": "",
+      "Details": ""
+    },
+    {
+      "Category": "Defender",
+      "Check": "Tamper Protection",
+      "Status": "PASS",
+      "Value": "Enabled",
+      "Expected": "",
+      "Details": ""
+    },
+    {
+      "Category": "Defender",
+      "Check": "Signature age",
+      "Status": "PASS",
+      "Value": "0 days",
+      "Expected": "",
+      "Details": ""
+    },
+    {
+      "Category": "Firewall",
+      "Check": "Domain profile",
+      "Status": "PASS",
+      "Value": "On",
+      "Expected": "",
+      "Details": ""
+    },
+    {
+      "Category": "Firewall",
+      "Check": "Private profile",
+      "Status": "PASS",
+      "Value": "On",
+      "Expected": "",
+      "Details": ""
+    },
+    {
+      "Category": "Firewall",
+      "Check": "Public profile",
+      "Status": "PASS",
+      "Value": "On",
+      "Expected": "",
+      "Details": ""
+    },
+    {
+      "Category": "SMB Security",
+      "Check": "SMBv1 server protocol",
+      "Status": "PASS",
+      "Value": "Disabled",
+      "Expected": "Disabled",
+      "Details": ""
+    },
+    {
+      "Category": "SMB Security",
+      "Check": "SMB server signing required",
+      "Status": "PASS",
+      "Value": "True",
+      "Expected": "",
+      "Details": ""
+    },
+    {
+      "Category": "SMB Security",
+      "Check": "Insecure SMB guest logons",
+      "Status": "PASS",
+      "Value": "Disabled",
+      "Expected": "Disabled",
+      "Details": ""
+    },
+    {
+      "Category": "Privilege Protection",
+      "Check": "User Account Control",
+      "Status": "PASS",
+      "Value": "Enabled",
+      "Expected": "",
+      "Details": ""
+    },
+    {
+      "Category": "Privilege Protection",
+      "Check": "UAC Secure Desktop",
+      "Status": "WARN",
+      "Value": "Disabled",
+      "Expected": "Enabled",
+      "Details": "Elevation prompts do not use the secure desktop."
+    },
+    {
+      "Category": "Remote Access",
+      "Check": "Remote Desktop",
+      "Status": "INFO",
+      "Value": "Disabled",
+      "Expected": "",
+      "Details": ""
+    }
+  ],
+  "Storage": {
+    "PhysicalDisks": [],
+    "StoragePools": [],
+    "VirtualDisks": [],
+    "Volumes": [],
+    "BitLockerVolumes": []
+  },
+  "AntivirusProducts": []
 };
 
 /* ---------- ordering + helpers ---------- */
-const CAT_ORDER=["System","Boot Security","TPM","Storage Health","BitLocker",
-  "Virtualisation Security","Windows Security","Antivirus","SMB Security","Remote Access","Privilege Security"];
+const CAT_ORDER=["System","Boot Security","TPM","BitLocker","Storage Health",
+  "Virtualisation Security","Credential Protection","Antivirus","Defender","Firewall",
+  "SMB Security","Remote Access","Privilege Protection","Collection"];
 const SEV=["FAIL","WARN","UNKNOWN","INFO","PASS"];
 const esc=s=>String(s==null?"":s).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
 
@@ -323,17 +582,17 @@ const checks=REPORT.Checks;
 const counts={PASS:0,WARN:0,FAIL:0,UNKNOWN:0,INFO:0};
 checks.forEach(c=>counts[c.Status]!=null&&counts[c.Status]++);
 
-/* weighted integrity score: PASS full, WARN half, FAIL zero; INFO/UNKNOWN excluded */
-const graded=counts.PASS+counts.WARN+counts.FAIL;
-const score=graded?Math.round(100*(counts.PASS+counts.WARN*0.5)/graded):0;
-const BANDS=[
-  [90,"HARDENED",  "var(--pass)",   "Posture is strong. Isolated items below are refinements, not exposures."],
-  [75,"FORTIFIED", "var(--cyan)",   "Solid baseline with a few gaps worth closing."],
-  [60,"GUARDED",   "var(--warn)",   "Adequate, but several protections are off or mis-firing."],
-  [40,"EXPOSED",   "var(--fail)",   "Multiple core protections are missing. Prioritise the FAIL items."],
-  [0, "COMPROMISED","var(--fail)",  "Critical protections absent. Treat this host as at-risk."]
-];
-const band=BANDS.find(b=>score>=b[0]);
+/* Score, band, coverage and hard fails come straight from the PowerShell
+   engine (REPORT.*) so the dashboard and the console can never disagree. */
+const BANDCOL={HARDENED:"var(--pass)",FORTIFIED:"var(--cyan)",GUARDED:"var(--warn)",
+  EXPOSED:"var(--fail)","AT RISK":"var(--fail)",CRITICAL:"var(--fail)"};
+const score=REPORT.Score!=null?REPORT.Score:0;
+const bandName=REPORT.Posture||"UNKNOWN";
+const bandCol=BANDCOL[bandName]||"var(--dim)";
+const incomplete=!!REPORT.Incomplete;
+const coverage=REPORT.Coverage!=null?REPORT.Coverage:100;
+const verdict=REPORT.Verdict||"";
+const hardFails=REPORT.HardFails||[];
 
 /* ---------- banner ---------- */
 const $=id=>document.getElementById(id);
@@ -347,11 +606,15 @@ const tstr=ts.toLocaleString(undefined,{year:"numeric",month:"short",day:"2-digi
 $("m-time").textContent=tstr; $("f-time").textContent=tstr;
 
 /* ---------- gauge ---------- */
-document.getElementById("band").textContent=band[1];
-document.getElementById("band").style.color=band[2];
-document.getElementById("band").style.textShadow="0 0 12px "+band[2];
-document.getElementById("verdict").textContent=band[3];
+const bandEl=$("band");
+bandEl.textContent=incomplete?bandName+" · INCOMPLETE":bandName;
+bandEl.style.color=bandCol;
+bandEl.style.textShadow="0 0 12px "+bandCol;
+$("verdict").innerHTML=esc(verdict)+(incomplete
+  ?`<br><span style="color:var(--warn)">Coverage ${coverage}% — run as Administrator for a full score.</span>`:"");
 const arc=document.getElementById("arc"), C=578, full=433.5; // 270deg of 2πr
+arc.setAttribute("stroke",bandCol);
+arc.style.filter="drop-shadow(0 0 6px "+bandCol+")";
 const target=full*(score/100);
 const scoreEl=document.getElementById("score");
 const reduce=matchMedia("(prefers-reduced-motion:reduce)").matches;
@@ -363,6 +626,17 @@ else{
     scoreEl.textContent=Math.round(score*e);
     if(p<1)requestAnimationFrame(step);};
   requestAnimationFrame(step);
+}
+
+/* ---------- hard fails callout ---------- */
+if(hardFails.length){
+  const hf=document.createElement("div");
+  hf.className="hardfails";
+  hf.innerHTML=`<h3>&#9888; HARD FAILS — each caps the score</h3>`+hardFails.map(h=>
+    `<div class="hf-row"><span class="hf-cap">&#8804;${h.Cap}</span>`+
+    `<span class="hf-name">${esc(h.Category)} / ${esc(h.Check)}</span></div>`).join("");
+  const tb=document.querySelector(".toolbar");
+  tb.parentNode.insertBefore(hf,tb);
 }
 
 /* ---------- stat tiles ---------- */
@@ -439,3 +713,4 @@ document.getElementById("tiles").addEventListener("keydown",e=>{
   if(e.key==="Enter"||e.key===" "){e.preventDefault();const t=e.target.closest(".tile");if(t)applyFilter(filter===t.dataset.f?"ALL":t.dataset.f);}
 });
 </script>
+

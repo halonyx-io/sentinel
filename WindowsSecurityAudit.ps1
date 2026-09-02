@@ -676,7 +676,7 @@ function Get-PostureBand {
         return [PSCustomObject]@{
             Name    = 'GUARDED'
             Colour  = 'Yellow'
-            Verdict = 'Adequate, but several protections are off or mis-firing.'
+            Verdict = 'Adequate, but core protections need attention.'
         }
     }
     elseif ($Score -ge 40) {
@@ -686,12 +686,190 @@ function Get-PostureBand {
             Verdict = 'Multiple core protections are missing. Prioritise the FAIL items.'
         }
     }
+    elseif ($Score -ge 20) {
+        return [PSCustomObject]@{
+            Name    = 'AT RISK'
+            Colour  = 'Red'
+            Verdict = 'Critical protections are off. This host is a soft target.'
+        }
+    }
     else {
         return [PSCustomObject]@{
-            Name    = 'COMPROMISED'
+            Name    = 'CRITICAL'
             Colour  = 'DarkRed'
-            Verdict = 'Critical protections absent. Treat this host as at-risk.'
+            Verdict = 'Fundamental protections absent. Treat this host as compromised-if-lost.'
         }
+    }
+}
+
+
+# ----------------------------------------------------------------------------
+# RISK-WEIGHTED POSTURE SCORING
+#
+# The score is NOT an average of pass/fail counts. Each genuine security
+# control carries a WEIGHT (its share of the score) and, if it is critical, a
+# CAP (the highest score the whole machine may earn while that control is
+# FAILING). Informational checks (disk/volume health, system inventory, AV
+# product lists, ...) are NOT in the table and never touch the score, so
+# adding healthy disks can no longer inflate posture.
+#
+#   outcome:  PASS -> 1.0   WARN -> 0.5   FAIL -> 0.0   UNKNOWN -> excluded
+#   base  = 100 * (Sum weight*outcome) / (Sum weight over known controls)
+#   score = min(base, min(Cap of every FAILING critical control))
+#
+# Emphasis: device-theft + malware resilience (encryption, Secure Boot, TPM,
+# Defender, firewall dominate the weights). Tune weights/caps in $Map below.
+# ----------------------------------------------------------------------------
+function Get-PostureAssessment {
+
+    param(
+        [Parameter(Mandatory)]
+        [object]$Checks,
+
+        [bool]$IsAdmin = $true
+    )
+
+    # Cat = exact Category; Pat = regex on the check name.
+    # W = weight; Cap = score ceiling if this control FAILs; Crit = critical.
+    $Map = @(
+        @{ Cat = 'Boot Security';           Pat = '^Secure Boot$';                   W = 12; Cap = 55;  Crit = $true }
+        @{ Cat = 'Boot Security';           Pat = '^Firmware boot mode$';            W = 2;  Cap = 100; Crit = $false }
+
+        @{ Cat = 'TPM';                     Pat = '^TPM present$';                   W = 6;  Cap = 70;  Crit = $true }
+        @{ Cat = 'TPM';                     Pat = '^TPM specification$';             W = 2;  Cap = 100; Crit = $false }
+        @{ Cat = 'TPM';                     Pat = '^TPM ready$';                     W = 2;  Cap = 100; Crit = $false }
+
+        @{ Cat = 'BitLocker';               Pat = '^OS volume';                      W = 20; Cap = 35;  Crit = $true }
+        @{ Cat = 'BitLocker';               Pat = '^Data volume';                    W = 8;  Cap = 100; Crit = $false }
+        @{ Cat = 'BitLocker';               Pat = 'encryption strength';             W = 3;  Cap = 100; Crit = $false }
+        @{ Cat = 'BitLocker';               Pat = 'key protector';                   W = 3;  Cap = 100; Crit = $false }
+
+        @{ Cat = 'Virtualisation Security'; Pat = '^Virtualization Based Security$'; W = 4;  Cap = 100; Crit = $false }
+        @{ Cat = 'Virtualisation Security'; Pat = '^Memory Integrity';               W = 5;  Cap = 100; Crit = $false }
+        @{ Cat = 'Virtualisation Security'; Pat = '^Credential Guard$';              W = 4;  Cap = 100; Crit = $false }
+
+        @{ Cat = 'Credential Protection';   Pat = '^LSA';                            W = 5;  Cap = 100; Crit = $false }
+
+        @{ Cat = 'Defender';                Pat = '^Real-time protection$';          W = 8;  Cap = 50;  Crit = $true }
+        @{ Cat = 'Defender';                Pat = '^Defender running mode$';         W = 4;  Cap = 100; Crit = $false }
+        @{ Cat = 'Defender';                Pat = '^Behaviour monitoring$';          W = 2;  Cap = 100; Crit = $false }
+        @{ Cat = 'Defender';                Pat = '^Tamper Protection$';             W = 5;  Cap = 100; Crit = $false }
+        @{ Cat = 'Defender';                Pat = '^Downloaded file scanning$';      W = 1;  Cap = 100; Crit = $false }
+        @{ Cat = 'Defender';                Pat = '^Network Inspection System$';     W = 1;  Cap = 100; Crit = $false }
+        @{ Cat = 'Defender';                Pat = '^Signature age$';                 W = 2;  Cap = 100; Crit = $false }
+
+        @{ Cat = 'Firewall';                Pat = 'profile$';                        W = 3;  Cap = 55;  Crit = $true }
+
+        @{ Cat = 'SMB Security';            Pat = '^SMBv1';                          W = 5;  Cap = 60;  Crit = $true }
+        @{ Cat = 'SMB Security';            Pat = 'signing required$';               W = 2;  Cap = 100; Crit = $false }
+        @{ Cat = 'SMB Security';            Pat = 'guest logons$';                   W = 2;  Cap = 100; Crit = $false }
+
+        @{ Cat = 'Privilege Protection';    Pat = '^User Account Control$';          W = 4;  Cap = 60;  Crit = $false }
+        @{ Cat = 'Privilege Protection';    Pat = '^Admin elevation';               W = 2;  Cap = 100; Crit = $false }
+        @{ Cat = 'Privilege Protection';    Pat = 'Secure Desktop$';                 W = 2;  Cap = 100; Crit = $false }
+
+        @{ Cat = 'Remote Access';           Pat = 'Network Level Authentication$';   W = 4;  Cap = 60;  Crit = $false }
+
+        @{ Cat = 'System';                  Pat = '^Pending reboot$';                W = 1;  Cap = 100; Crit = $false }
+    )
+
+    $Outcome = @{ 'PASS' = 1.0; 'WARN' = 0.5; 'FAIL' = 0.0 }
+
+    $Earned = 0.0
+    $Avail = 0.0
+    $WeightTotal = 0.0
+    $WeightKnown = 0.0
+    $CriticalUnknown = $false
+
+    $Caps = New-Object System.Collections.Generic.List[int]
+    $HardFails = New-Object System.Collections.Generic.List[object]
+
+    foreach ($Check in $Checks) {
+
+        $Entry = $null
+        foreach ($M in $Map) {
+            if ($Check.Category -eq $M.Cat -and $Check.Check -match $M.Pat) {
+                $Entry = $M
+                break
+            }
+        }
+
+        if ($null -eq $Entry) { continue }
+
+        $W = [double]$Entry.W
+        if ($W -le 0) { continue }
+
+        if ($Check.Status -eq 'UNKNOWN') {
+            $WeightTotal += $W
+            if ($Entry.Crit) { $CriticalUnknown = $true }
+            continue
+        }
+
+        # INFO (or any non-scored status) is ignored entirely - it must not
+        # count toward the coverage denominator or the score.
+        if (-not $Outcome.ContainsKey($Check.Status)) { continue }
+
+        $WeightTotal += $W
+        $WeightKnown += $W
+        $Avail += $W
+        $Earned += $W * $Outcome[$Check.Status]
+
+        if ($Check.Status -eq 'FAIL') {
+            $Caps.Add([int]$Entry.Cap)
+            $HardFails.Add(
+                [PSCustomObject]@{
+                    Category = $Check.Category
+                    Check    = $Check.Check
+                    Cap      = [int]$Entry.Cap
+                    Critical = [bool]$Entry.Crit
+                }
+            )
+        }
+    }
+
+    $Base = if ($Avail -gt 0) { 100.0 * $Earned / $Avail } else { 0.0 }
+    $Score = [int][math]::Round($Base)
+
+    foreach ($C in $Caps) {
+        if ($C -lt $Score) { $Score = $C }
+    }
+    if ($Score -lt 0) { $Score = 0 }
+    if ($Score -gt 100) { $Score = 100 }
+
+    $Coverage = if ($WeightTotal -gt 0) {
+        [int][math]::Round(100.0 * $WeightKnown / $WeightTotal)
+    }
+    else {
+        0
+    }
+
+    $Incomplete = (
+        (-not $IsAdmin) -or
+        $CriticalUnknown -or
+        ($Coverage -lt 80)
+    )
+
+    $Band = Get-PostureBand -Score $Score
+
+    # Never award a green band on incomplete evidence.
+    if ($Incomplete -and $Score -gt 74) {
+        $Band = Get-PostureBand -Score 74
+    }
+
+    # Sort hard fails: critical first, then by lowest cap.
+    $HardFailsSorted = @(
+        $HardFails |
+        Sort-Object -Property @{ Expression = 'Critical'; Descending = $true }, @{ Expression = 'Cap'; Descending = $false }
+    )
+
+    return [PSCustomObject]@{
+        Score      = $Score
+        Band       = $Band.Name
+        Colour     = $Band.Colour
+        Verdict    = $Band.Verdict
+        Coverage   = $Coverage
+        Incomplete = [bool]$Incomplete
+        HardFails  = $HardFailsSorted
     }
 }
 
@@ -743,6 +921,9 @@ function Write-PostureGauge {
         [string]$Band,
         [string]$Colour,
         [string]$Verdict,
+        [int]$Coverage = 100,
+        [bool]$Incomplete = $false,
+        [object[]]$HardFails = @(),
         $Summary
     )
 
@@ -752,6 +933,8 @@ function Write-PostureGauge {
     if ($Filled -gt $Width) { $Filled = $Width }
     $Bar = ('#' * $Filled) + ('-' * ($Width - $Filled))
 
+    $BandText = if ($Incomplete) { "$Band  (INCOMPLETE)" } else { $Band }
+
     Write-Host ''
     Write-Host ('  ' + ('=' * 62)) -ForegroundColor DarkGray
     Write-Host '  SYSTEM INTEGRITY  ' -NoNewline
@@ -759,10 +942,28 @@ function Write-PostureGauge {
     Write-Host $Bar -NoNewline -ForegroundColor $Colour
     Write-Host ']' -NoNewline -ForegroundColor DarkGray
     Write-Host ('  ' + $Score + '/100  ') -NoNewline
-    Write-Host $Band -ForegroundColor $Colour
+    Write-Host $BandText -ForegroundColor $Colour
     Write-Host ('  ' + $Verdict) -ForegroundColor DarkGray
-    Write-Host ''
 
+    if ($Incomplete) {
+        Write-Host (
+            '  Coverage ' + $Coverage +
+            '% - some controls could not be read. Re-run as Administrator for a full score.'
+        ) -ForegroundColor DarkYellow
+    }
+
+    if ($HardFails.Count -gt 0) {
+        Write-Host ''
+        Write-Host '  HARD FAILS (each caps the score):' -ForegroundColor Red
+        foreach ($HF in $HardFails) {
+            Write-Host (
+                '    x ' + $HF.Category + ' / ' + $HF.Check +
+                '  -> score capped at ' + $HF.Cap
+            ) -ForegroundColor Red
+        }
+    }
+
+    Write-Host ''
     Write-Host '  PASS '     -NoNewline -ForegroundColor Green
     Write-Host $Summary.Pass -NoNewline -ForegroundColor Green
     Write-Host '    WARN '   -NoNewline -ForegroundColor Yellow
@@ -903,6 +1104,16 @@ function New-HtmlReport {
   .legend{display:flex;flex-wrap:wrap;gap:6px 16px;margin-top:11px;font-size:11px;color:var(--dim)}
   .legend b{color:var(--text);font-weight:500}
   .legend .sw{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:6px;vertical-align:middle}
+
+  /* ---- hard fails callout ---- */
+  .hardfails{margin-top:22px;border:1px solid rgba(255,67,104,.4);border-radius:4px;
+    background:linear-gradient(180deg,rgba(255,67,104,.10),rgba(255,67,104,.03));padding:14px 16px}
+  .hardfails h3{margin:0 0 10px;font-family:"Chakra Petch",sans-serif;font-weight:600;font-size:12px;
+    letter-spacing:.16em;text-transform:uppercase;color:var(--fail)}
+  .hf-row{display:flex;align-items:center;gap:12px;padding:5px 0;font-size:13px;color:var(--text)}
+  .hf-row+.hf-row{border-top:1px solid rgba(255,67,104,.14)}
+  .hf-cap{flex:none;min-width:44px;text-align:center;font-family:"Chakra Petch",sans-serif;font-weight:700;
+    color:var(--fail);border:1px solid rgba(255,67,104,.4);border-radius:2px;padding:2px 6px;font-size:12px}
 
   /* ---- filter bar ---- */
   .toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin:26px 0 14px}
@@ -1052,8 +1263,9 @@ function New-HtmlReport {
 const REPORT = @@REPORT_JSON@@;
 
 /* ---------- ordering + helpers ---------- */
-const CAT_ORDER=["System","Boot Security","TPM","Storage Health","BitLocker",
-  "Virtualisation Security","Windows Security","Antivirus","SMB Security","Remote Access","Privilege Security"];
+const CAT_ORDER=["System","Boot Security","TPM","BitLocker","Storage Health",
+  "Virtualisation Security","Credential Protection","Antivirus","Defender","Firewall",
+  "SMB Security","Remote Access","Privilege Protection","Collection"];
 const SEV=["FAIL","WARN","UNKNOWN","INFO","PASS"];
 const esc=s=>String(s==null?"":s).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
 
@@ -1061,17 +1273,17 @@ const checks=REPORT.Checks;
 const counts={PASS:0,WARN:0,FAIL:0,UNKNOWN:0,INFO:0};
 checks.forEach(c=>counts[c.Status]!=null&&counts[c.Status]++);
 
-/* weighted integrity score: PASS full, WARN half, FAIL zero; INFO/UNKNOWN excluded */
-const graded=counts.PASS+counts.WARN+counts.FAIL;
-const score=graded?Math.round(100*(counts.PASS+counts.WARN*0.5)/graded):0;
-const BANDS=[
-  [90,"HARDENED",  "var(--pass)",   "Posture is strong. Isolated items below are refinements, not exposures."],
-  [75,"FORTIFIED", "var(--cyan)",   "Solid baseline with a few gaps worth closing."],
-  [60,"GUARDED",   "var(--warn)",   "Adequate, but several protections are off or mis-firing."],
-  [40,"EXPOSED",   "var(--fail)",   "Multiple core protections are missing. Prioritise the FAIL items."],
-  [0, "COMPROMISED","var(--fail)",  "Critical protections absent. Treat this host as at-risk."]
-];
-const band=BANDS.find(b=>score>=b[0]);
+/* Score, band, coverage and hard fails come straight from the PowerShell
+   engine (REPORT.*) so the dashboard and the console can never disagree. */
+const BANDCOL={HARDENED:"var(--pass)",FORTIFIED:"var(--cyan)",GUARDED:"var(--warn)",
+  EXPOSED:"var(--fail)","AT RISK":"var(--fail)",CRITICAL:"var(--fail)"};
+const score=REPORT.Score!=null?REPORT.Score:0;
+const bandName=REPORT.Posture||"UNKNOWN";
+const bandCol=BANDCOL[bandName]||"var(--dim)";
+const incomplete=!!REPORT.Incomplete;
+const coverage=REPORT.Coverage!=null?REPORT.Coverage:100;
+const verdict=REPORT.Verdict||"";
+const hardFails=REPORT.HardFails||[];
 
 /* ---------- banner ---------- */
 const $=id=>document.getElementById(id);
@@ -1085,11 +1297,15 @@ const tstr=ts.toLocaleString(undefined,{year:"numeric",month:"short",day:"2-digi
 $("m-time").textContent=tstr; $("f-time").textContent=tstr;
 
 /* ---------- gauge ---------- */
-document.getElementById("band").textContent=band[1];
-document.getElementById("band").style.color=band[2];
-document.getElementById("band").style.textShadow="0 0 12px "+band[2];
-document.getElementById("verdict").textContent=band[3];
+const bandEl=$("band");
+bandEl.textContent=incomplete?bandName+" · INCOMPLETE":bandName;
+bandEl.style.color=bandCol;
+bandEl.style.textShadow="0 0 12px "+bandCol;
+$("verdict").innerHTML=esc(verdict)+(incomplete
+  ?`<br><span style="color:var(--warn)">Coverage ${coverage}% — run as Administrator for a full score.</span>`:"");
 const arc=document.getElementById("arc"), C=578, full=433.5; // 270deg of 2πr
+arc.setAttribute("stroke",bandCol);
+arc.style.filter="drop-shadow(0 0 6px "+bandCol+")";
 const target=full*(score/100);
 const scoreEl=document.getElementById("score");
 const reduce=matchMedia("(prefers-reduced-motion:reduce)").matches;
@@ -1101,6 +1317,17 @@ else{
     scoreEl.textContent=Math.round(score*e);
     if(p<1)requestAnimationFrame(step);};
   requestAnimationFrame(step);
+}
+
+/* ---------- hard fails callout ---------- */
+if(hardFails.length){
+  const hf=document.createElement("div");
+  hf.className="hardfails";
+  hf.innerHTML=`<h3>&#9888; HARD FAILS — each caps the score</h3>`+hardFails.map(h=>
+    `<div class="hf-row"><span class="hf-cap">&#8804;${h.Cap}</span>`+
+    `<span class="hf-name">${esc(h.Category)} / ${esc(h.Check)}</span></div>`).join("");
+  const tb=document.querySelector(".toolbar");
+  tb.parentNode.insertBefore(hf,tb);
 }
 
 /* ---------- stat tiles ---------- */
@@ -1574,14 +1801,22 @@ else {
 # TPM
 # ============================================================================
 
+# TPM interfaces are gathered from three sources. Get-Tpm and the Win32_Tpm
+# CIM class both require elevation (they throw Access Denied otherwise), so
+# Get-PnpDevice -Class SecurityDevices - which works WITHOUT elevation - is
+# the presence/version fallback. A TPM is only reported ABSENT on positive
+# evidence (a successful device query that found none); if every interface is
+# inaccessible the result is UNKNOWN, never a false FAIL.
+
 $TPMNative = $null
-$TPMCim = $null
+$TPMCim    = $null
+$TPMPnp    = $null
+$TPMPnpQueried = $false
 
 
 if (Test-CommandExists 'Get-Tpm') {
 
     try {
-
         $TPMNative =
             Get-Tpm `
                 -ErrorAction Stop
@@ -1590,8 +1825,15 @@ if (Test-CommandExists 'Get-Tpm') {
 }
 
 
-try {
+# Get-Tpm is unreliable without elevation: instead of throwing it can return
+# an object reporting TpmPresent=$false. Ignore it unless elevated so a false
+# reading can never override the unprivileged PnP evidence below.
+if (-not $IsAdmin) {
+    $TPMNative = $null
+}
 
+
+try {
     $TPMCim =
         Get-CimInstance `
             -Namespace 'Root\CIMv2\Security\MicrosoftTpm' `
@@ -1601,24 +1843,78 @@ try {
 catch {}
 
 
+if (Test-CommandExists 'Get-PnpDevice') {
+
+    try {
+
+        $SecurityDevices =
+            @(
+                Get-PnpDevice `
+                    -Class SecurityDevices `
+                    -ErrorAction Stop
+            )
+
+        $TPMPnpQueried = $true
+
+        $TPMPnp =
+            $SecurityDevices |
+            Where-Object {
+                $_.FriendlyName -match 'Trusted Platform|TPM'
+            } |
+            Select-Object -First 1
+    }
+    catch {}
+}
+
+
+# ---- presence ----
+# Positive evidence from any source wins. Only conclude "absent" when the
+# unprivileged security-device query ran and found no TPM (and nothing else
+# affirmed one), or when elevated Get-Tpm explicitly reports none.
+
+$NativePresent = $null
+if ($TPMNative -and (Test-ObjectProperty $TPMNative 'TpmPresent')) {
+    $NativePresent = [bool]$TPMNative.TpmPresent
+}
+
 $TPMPresent = $null
 
-
-if ($TPMNative) {
-
-    $TPMPresent =
-        [bool](
-            Get-PropertyValue `
-                -Object $TPMNative `
-                -Property 'TpmPresent' `
-                -Default $false
-        )
-}
-elseif ($TPMCim) {
-
+if (($NativePresent -eq $true) -or $TPMCim -or $TPMPnp) {
     $TPMPresent = $true
 }
+elseif ($TPMPnpQueried) {
+    # Security-device enumeration succeeded and found no TPM -> genuinely absent.
+    $TPMPresent = $false
+}
+elseif ($NativePresent -eq $false) {
+    $TPMPresent = $false
+}
 
+
+# ---- version ----
+
+$TPMVersion = $null
+
+if ($TPMCim -and (Test-ObjectProperty $TPMCim 'SpecVersion') -and $TPMCim.SpecVersion) {
+
+    $SpecVersion = [string]$TPMCim.SpecVersion
+
+    if ($SpecVersion -match '2\.0')      { $TPMVersion = '2.0' }
+    elseif ($SpecVersion -match '1\.2')  { $TPMVersion = '1.2' }
+}
+
+if (
+    -not $TPMVersion -and
+    $TPMPnp -and
+    (Test-ObjectProperty $TPMPnp 'FriendlyName') -and
+    $TPMPnp.FriendlyName
+) {
+    if ($TPMPnp.FriendlyName -match '2\.0')     { $TPMVersion = '2.0' }
+    elseif ($TPMPnp.FriendlyName -match '1\.2') { $TPMVersion = '1.2' }
+}
+
+
+# ---- present check ----
 
 if ($null -eq $TPMPresent) {
 
@@ -1626,16 +1922,27 @@ if ($null -eq $TPMPresent) {
         -Category 'TPM' `
         -Name 'TPM present' `
         -Status 'UNKNOWN' `
-        -Value 'Unable to determine'
+        -Value 'Unable to determine' `
+        -Expected 'TPM 2.0' `
+        -Details 'All TPM interfaces were inaccessible. Re-run as Administrator.'
 }
 elseif ($TPMPresent) {
+
+    $TPMSource =
+        if ($TPMNative)  { 'Get-Tpm' }
+        elseif ($TPMCim) { 'Win32_Tpm' }
+        else             { 'PnP security device' }
+
+    $TPMPresentValue =
+        if ($TPMVersion) { "Yes (TPM $TPMVersion)" } else { 'Yes' }
 
     Add-Check `
         -Category 'TPM' `
         -Name 'TPM present' `
         -Status 'PASS' `
-        -Value 'Yes' `
-        -Expected 'Yes'
+        -Value $TPMPresentValue `
+        -Expected 'Yes' `
+        -Details "Detected via $TPMSource."
 }
 else {
 
@@ -1644,14 +1951,74 @@ else {
         -Name 'TPM present' `
         -Status 'FAIL' `
         -Value 'No' `
+        -Expected 'TPM 2.0' `
+        -Details 'No TPM security device found. BitLocker cannot bind keys to hardware.'
+}
+
+
+# ---- specification / version ----
+
+if ($TPMVersion) {
+
+    $TPMSpecStatus =
+        if ($TPMVersion -eq '2.0') { 'PASS' } else { 'WARN' }
+
+    $TPMSpecDetails =
+        if ($TPMVersion -eq '1.2') {
+            'TPM 1.2 is deprecated; Windows 11 and modern attestation expect 2.0.'
+        }
+        else { '' }
+
+    Add-Check `
+        -Category 'TPM' `
+        -Name 'TPM specification' `
+        -Status $TPMSpecStatus `
+        -Value "TPM $TPMVersion" `
+        -Expected 'TPM 2.0' `
+        -Details $TPMSpecDetails
+}
+elseif ($TPMPresent) {
+
+    Add-Check `
+        -Category 'TPM' `
+        -Name 'TPM specification' `
+        -Status 'UNKNOWN' `
+        -Value 'Version not readable' `
         -Expected 'TPM 2.0'
 }
 
 
-if (
-    $TPMNative -and
-    (Test-ObjectProperty $TPMNative 'TpmReady')
-) {
+# ---- enabled / activated (only when the privileged data is available) ----
+
+$TPMEnabled = $null
+$TPMActivated = $null
+
+if ($TPMNative) {
+    if (Test-ObjectProperty $TPMNative 'TpmEnabled')   { $TPMEnabled   = [bool]$TPMNative.TpmEnabled }
+    if (Test-ObjectProperty $TPMNative 'TpmActivated') { $TPMActivated = [bool]$TPMNative.TpmActivated }
+}
+if ($null -eq $TPMEnabled -and $TPMCim -and (Test-ObjectProperty $TPMCim 'IsEnabled_InitialValue')) {
+    $TPMEnabled = [bool]$TPMCim.IsEnabled_InitialValue
+}
+if ($null -eq $TPMActivated -and $TPMCim -and (Test-ObjectProperty $TPMCim 'IsActivated_InitialValue')) {
+    $TPMActivated = [bool]$TPMCim.IsActivated_InitialValue
+}
+
+if ($TPMPresent -and ($TPMEnabled -eq $false -or $TPMActivated -eq $false)) {
+
+    Add-Check `
+        -Category 'TPM' `
+        -Name 'TPM enabled' `
+        -Status 'WARN' `
+        -Value "Enabled=$TPMEnabled; Activated=$TPMActivated" `
+        -Expected 'Enabled and activated' `
+        -Details 'TPM is present but not enabled/activated in firmware. Enable it in UEFI/BIOS setup.'
+}
+
+
+# ---- ready ----
+
+if ($TPMNative -and (Test-ObjectProperty $TPMNative 'TpmReady')) {
 
     if ($TPMNative.TpmReady) {
 
@@ -1666,33 +2033,20 @@ if (
         Add-Check `
             -Category 'TPM' `
             -Name 'TPM ready' `
-            -Status 'FAIL' `
+            -Status 'WARN' `
             -Value 'No' `
-            -Expected 'Ready'
+            -Expected 'Ready' `
+            -Details 'TPM present but not fully provisioned/owned by Windows.'
     }
 }
-
-
-if ($TPMCim -and $TPMCim.SpecVersion) {
-
-    $SpecVersion =
-        [string]$TPMCim.SpecVersion
-
-
-    if ($SpecVersion -match '^\s*2\.0') {
-        $TPMSpecStatus = 'PASS'
-    }
-    else {
-        $TPMSpecStatus = 'WARN'
-    }
-
+elseif ($TPMPresent -and -not $IsAdmin) {
 
     Add-Check `
         -Category 'TPM' `
-        -Name 'TPM specification' `
-        -Status $TPMSpecStatus `
-        -Value $SpecVersion `
-        -Expected 'TPM 2.0'
+        -Name 'TPM ready' `
+        -Status 'UNKNOWN' `
+        -Value 'Requires elevation' `
+        -Details 'Run as Administrator to read TPM readiness.'
 }
 
 
@@ -3052,9 +3406,16 @@ if (Test-CommandExists 'Get-BitLockerVolume') {
             }
 
 
+        # OS vs data label drives the weighted score (OS encryption is a
+        # critical, hard-capped control; data volumes weigh less).
+        $VolumeRole =
+            if ($VolumeType -eq 'OperatingSystem') { 'OS volume' }
+            else { 'Data volume' }
+
+
         Add-Check `
             -Category 'BitLocker' `
-            -Name "Volume $DisplayMount" `
+            -Name "$VolumeRole $DisplayMount" `
             -Status $BLStatus `
             -Value (
                 "$VolumeStatus; " +
@@ -3073,6 +3434,90 @@ if (Test-CommandExists 'Get-BitLockerVolume') {
                 }
             ) `
             -Details $BLDetails
+
+
+        # --- encryption strength + key-protector quality (encrypted volumes) ---
+
+        $IsEncryptedVol =
+            (
+                $FullyEncrypted -or
+                ($EncryptionPercentage -gt 0) -or
+                ($VolumeStatus -match 'Encrypt')
+            ) -and
+            $EncryptionMethod -and
+            $EncryptionMethod -notmatch 'None'
+
+
+        if ($IsEncryptedVol) {
+
+            $EncPretty =
+                switch -Regex ($EncryptionMethod) {
+                    'XtsAes256' { 'XTS-AES-256'; break }
+                    'XtsAes128' { 'XTS-AES-128'; break }
+                    'Aes256'    { 'AES-CBC-256'; break }
+                    'Aes128'    { 'AES-CBC-128'; break }
+                    default     { $EncryptionMethod }
+                }
+
+            $EncStatus =
+                switch -Regex ($EncryptionMethod) {
+                    'XtsAes256'        { 'PASS'; break }
+                    'XtsAes128|Aes256' { 'WARN'; break }
+                    'Aes128'           { 'WARN'; break }
+                    default            { 'INFO' }
+                }
+
+            Add-Check `
+                -Category 'BitLocker' `
+                -Name "Encryption strength $DisplayMount" `
+                -Status $EncStatus `
+                -Value $EncPretty `
+                -Expected 'XTS-AES-256' `
+                -Details 'XTS-AES-256 is recommended for OS and fixed drives; AES-CBC and 128-bit are weaker/legacy.'
+
+
+            $HasTpmProt = ($KeyProtectors | Where-Object { $_ -match 'Tpm' }).Count -gt 0
+            $HasPinProt = ($KeyProtectors | Where-Object { $_ -match 'Pin' }).Count -gt 0
+            $HasSecret  = ($KeyProtectors | Where-Object { $_ -match 'Password|ExternalKey|StartupKey' }).Count -gt 0
+
+            if ($KeyProtectors.Count -eq 0) {
+                $KPStatus = 'FAIL'
+                $KPValue  = 'None'
+                $KPDetails = 'Encrypted but no key protectors - the volume may auto-unlock with no authentication.'
+            }
+            elseif ($HasTpmProt -and $HasPinProt) {
+                $KPStatus = 'PASS'
+                $KPValue  = 'TPM + PIN'
+                $KPDetails = 'Pre-boot authentication with TPM anti-hammering - strongest common protector.'
+            }
+            elseif ($HasTpmProt) {
+                $KPStatus = 'WARN'
+                $KPValue  = 'TPM only'
+                $KPDetails = 'Deters casual theft, but no pre-boot secret - weaker to DMA/evil-maid attacks. Add a PIN.'
+            }
+            elseif ($HasPinProt -or $HasSecret) {
+                $KPStatus = 'WARN'
+                $KPValue  = 'Password / USB only (no TPM)'
+                $KPDetails = 'No TPM binding - vulnerable to offline brute force and lacks measured-boot protection.'
+            }
+            else {
+                $KPStatus = 'INFO'
+                $KPValue  = $KeyProtectorString
+                $KPDetails = 'Key protectors present.'
+            }
+
+            if (-not $RecoveryProtectorPresent -and $KPStatus -ne 'FAIL') {
+                $KPDetails = $KPDetails + ' No recovery password present - risk of permanent lockout.'
+            }
+
+            Add-Check `
+                -Category 'BitLocker' `
+                -Name "Key protector $DisplayMount" `
+                -Status $KPStatus `
+                -Value $KPValue `
+                -Expected 'TPM + PIN' `
+                -Details $KPDetails
+        }
 
 
         $BitLockerObject = [PSCustomObject]@{
@@ -4173,21 +4618,14 @@ $Summary = [ordered]@{
 }
 
 
-$Graded = $Summary.Pass + $Summary.Warn + $Summary.Fail
-
-$Score = if ($Graded -gt 0) {
-    [int][math]::Round(
-        (100 * ($Summary.Pass + ($Summary.Warn * 0.5))) / $Graded
-    )
-}
-else {
-    0
-}
-
-$PostureBand  = Get-PostureBand -Score $Score
-$ScoreBand    = $PostureBand.Name
-$ScoreColour  = $PostureBand.Colour
-$ScoreVerdict = $PostureBand.Verdict
+$Assessment   = Get-PostureAssessment -Checks $script:Checks -IsAdmin $IsAdmin
+$Score        = $Assessment.Score
+$ScoreBand    = $Assessment.Band
+$ScoreColour  = $Assessment.Colour
+$ScoreVerdict = $Assessment.Verdict
+$Coverage     = $Assessment.Coverage
+$Incomplete   = $Assessment.Incomplete
+$HardFails    = $Assessment.HardFails
 
 
 $Report = [PSCustomObject]@{
@@ -4211,6 +4649,18 @@ $Report = [PSCustomObject]@{
 
     Posture =
         $ScoreBand
+
+    Verdict =
+        $ScoreVerdict
+
+    Coverage =
+        $Coverage
+
+    Incomplete =
+        $Incomplete
+
+    HardFails =
+        @($HardFails)
 
     Summary =
         $Summary
@@ -4320,6 +4770,9 @@ if (-not $Quiet) {
         -Band $ScoreBand `
         -Colour $ScoreColour `
         -Verdict $ScoreVerdict `
+        -Coverage $Coverage `
+        -Incomplete $Incomplete `
+        -HardFails $HardFails `
         -Summary $Summary
 
 

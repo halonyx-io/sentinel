@@ -114,6 +114,16 @@
   .legend b{color:var(--text);font-weight:500}
   .legend .sw{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:6px;vertical-align:middle}
 
+  /* ---- hard fails callout ---- */
+  .hardfails{margin-top:22px;border:1px solid rgba(255,67,104,.4);border-radius:4px;
+    background:linear-gradient(180deg,rgba(255,67,104,.10),rgba(255,67,104,.03));padding:14px 16px}
+  .hardfails h3{margin:0 0 10px;font-family:"Chakra Petch",sans-serif;font-weight:600;font-size:12px;
+    letter-spacing:.16em;text-transform:uppercase;color:var(--fail)}
+  .hf-row{display:flex;align-items:center;gap:12px;padding:5px 0;font-size:13px;color:var(--text)}
+  .hf-row+.hf-row{border-top:1px solid rgba(255,67,104,.14)}
+  .hf-cap{flex:none;min-width:44px;text-align:center;font-family:"Chakra Petch",sans-serif;font-weight:700;
+    color:var(--fail);border:1px solid rgba(255,67,104,.4);border-radius:2px;padding:2px 6px;font-size:12px}
+
   /* ---- filter bar ---- */
   .toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin:26px 0 14px}
   .toolbar .lbl{font-family:"Chakra Petch",sans-serif;font-size:11px;letter-spacing:.24em;color:var(--faint);text-transform:uppercase}
@@ -262,8 +272,9 @@
 const REPORT = @@REPORT_JSON@@;
 
 /* ---------- ordering + helpers ---------- */
-const CAT_ORDER=["System","Boot Security","TPM","Storage Health","BitLocker",
-  "Virtualisation Security","Windows Security","Antivirus","SMB Security","Remote Access","Privilege Security"];
+const CAT_ORDER=["System","Boot Security","TPM","BitLocker","Storage Health",
+  "Virtualisation Security","Credential Protection","Antivirus","Defender","Firewall",
+  "SMB Security","Remote Access","Privilege Protection","Collection"];
 const SEV=["FAIL","WARN","UNKNOWN","INFO","PASS"];
 const esc=s=>String(s==null?"":s).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
 
@@ -271,17 +282,17 @@ const checks=REPORT.Checks;
 const counts={PASS:0,WARN:0,FAIL:0,UNKNOWN:0,INFO:0};
 checks.forEach(c=>counts[c.Status]!=null&&counts[c.Status]++);
 
-/* weighted integrity score: PASS full, WARN half, FAIL zero; INFO/UNKNOWN excluded */
-const graded=counts.PASS+counts.WARN+counts.FAIL;
-const score=graded?Math.round(100*(counts.PASS+counts.WARN*0.5)/graded):0;
-const BANDS=[
-  [90,"HARDENED",  "var(--pass)",   "Posture is strong. Isolated items below are refinements, not exposures."],
-  [75,"FORTIFIED", "var(--cyan)",   "Solid baseline with a few gaps worth closing."],
-  [60,"GUARDED",   "var(--warn)",   "Adequate, but several protections are off or mis-firing."],
-  [40,"EXPOSED",   "var(--fail)",   "Multiple core protections are missing. Prioritise the FAIL items."],
-  [0, "COMPROMISED","var(--fail)",  "Critical protections absent. Treat this host as at-risk."]
-];
-const band=BANDS.find(b=>score>=b[0]);
+/* Score, band, coverage and hard fails come straight from the PowerShell
+   engine (REPORT.*) so the dashboard and the console can never disagree. */
+const BANDCOL={HARDENED:"var(--pass)",FORTIFIED:"var(--cyan)",GUARDED:"var(--warn)",
+  EXPOSED:"var(--fail)","AT RISK":"var(--fail)",CRITICAL:"var(--fail)"};
+const score=REPORT.Score!=null?REPORT.Score:0;
+const bandName=REPORT.Posture||"UNKNOWN";
+const bandCol=BANDCOL[bandName]||"var(--dim)";
+const incomplete=!!REPORT.Incomplete;
+const coverage=REPORT.Coverage!=null?REPORT.Coverage:100;
+const verdict=REPORT.Verdict||"";
+const hardFails=REPORT.HardFails||[];
 
 /* ---------- banner ---------- */
 const $=id=>document.getElementById(id);
@@ -295,11 +306,15 @@ const tstr=ts.toLocaleString(undefined,{year:"numeric",month:"short",day:"2-digi
 $("m-time").textContent=tstr; $("f-time").textContent=tstr;
 
 /* ---------- gauge ---------- */
-document.getElementById("band").textContent=band[1];
-document.getElementById("band").style.color=band[2];
-document.getElementById("band").style.textShadow="0 0 12px "+band[2];
-document.getElementById("verdict").textContent=band[3];
+const bandEl=$("band");
+bandEl.textContent=incomplete?bandName+" · INCOMPLETE":bandName;
+bandEl.style.color=bandCol;
+bandEl.style.textShadow="0 0 12px "+bandCol;
+$("verdict").innerHTML=esc(verdict)+(incomplete
+  ?`<br><span style="color:var(--warn)">Coverage ${coverage}% — run as Administrator for a full score.</span>`:"");
 const arc=document.getElementById("arc"), C=578, full=433.5; // 270deg of 2πr
+arc.setAttribute("stroke",bandCol);
+arc.style.filter="drop-shadow(0 0 6px "+bandCol+")";
 const target=full*(score/100);
 const scoreEl=document.getElementById("score");
 const reduce=matchMedia("(prefers-reduced-motion:reduce)").matches;
@@ -311,6 +326,17 @@ else{
     scoreEl.textContent=Math.round(score*e);
     if(p<1)requestAnimationFrame(step);};
   requestAnimationFrame(step);
+}
+
+/* ---------- hard fails callout ---------- */
+if(hardFails.length){
+  const hf=document.createElement("div");
+  hf.className="hardfails";
+  hf.innerHTML=`<h3>&#9888; HARD FAILS — each caps the score</h3>`+hardFails.map(h=>
+    `<div class="hf-row"><span class="hf-cap">&#8804;${h.Cap}</span>`+
+    `<span class="hf-name">${esc(h.Category)} / ${esc(h.Check)}</span></div>`).join("");
+  const tb=document.querySelector(".toolbar");
+  tb.parentNode.insertBefore(hf,tb);
 }
 
 /* ---------- stat tiles ---------- */
@@ -387,4 +413,4 @@ document.getElementById("tiles").addEventListener("keydown",e=>{
   if(e.key==="Enter"||e.key===" "){e.preventDefault();const t=e.target.closest(".tile");if(t)applyFilter(filter===t.dataset.f?"ALL":t.dataset.f);}
 });
 </script>
-
+

@@ -44,8 +44,10 @@ $Template = @' …the HTML/CSS/JS… '@                # embedded in the script
 $html     = $Template.Replace('@@REPORT_JSON@@', $Json)
 ```
 
-The page's JavaScript reads that one `REPORT` object and renders itself. The score is recomputed in
-the browser from the same checks, so the gauge can never disagree with the numbers below it. See
+The page's JavaScript reads that one `REPORT` object and renders itself. The **score, band, coverage,
+verdict and hard-fails are computed once in PowerShell** (`Get-PostureAssessment`) and read straight
+off `REPORT` — the page does no scoring maths of its own, so the gauge, the INCOMPLETE badge and the
+hard-fails callout can never disagree with the console. See
 [`examples/sentinel-report.template.html`](../examples/sentinel-report.template.html) for the exact
 template (the `@@REPORT_JSON@@` placeholder is where your data lands).
 
@@ -71,8 +73,9 @@ and all of it is disabled under reduced-motion.
 Everything lives in the `New-HtmlReport` here-string inside `WindowsSecurityAudit.ps1`:
 
 - **Palette** — edit the CSS custom properties in `:root`.
-- **Score bands / labels** — the `BANDS` array in the page's `<script>` (mirror any change to
-  `Get-PostureBand` in the PowerShell so console and HTML stay in step).
+- **Score weights / caps** — the `$Map` table in `Get-PostureAssessment`; **bands** live in
+  `Get-PostureBand`. Both are PowerShell — the page just renders what they produce, so there's only
+  one place to tune.
 - **Extra panels** — the `REPORT` object also carries `Storage` (physical disks, pools, virtual
   disks, volumes, BitLocker) and `AntivirusProducts`; they're exported but not yet drawn. Wiring a
   storage-map panel is a good first extension.

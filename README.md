@@ -34,10 +34,14 @@ is about the engine and the terminal.
 
 ```
   ==============================================================
-  SYSTEM INTEGRITY  [#####################################-----]  89/100  FORTIFIED
-  Solid baseline with a few gaps worth closing.
+  SYSTEM INTEGRITY  [#######################-------------------]  35/100  AT RISK
+  Critical protections are off. This host is a soft target.
 
-  PASS 29    WARN 4    FAIL 2    UNKNOWN 3    INFO 14
+  HARD FAILS (each caps the score):
+    x BitLocker / OS volume C:   -> score capped at 35
+    x Boot Security / Secure Boot -> score capped at 55
+
+  PASS 24    WARN 3    FAIL 2    UNKNOWN 0    INFO 5
   ==============================================================
 ```
 
@@ -58,17 +62,18 @@ If PowerShell blocks the script, unblock this one run without changing your mach
 powershell -ExecutionPolicy Bypass -File .\WindowsSecurityAudit.ps1
 ```
 
-> **Run elevated.** Sentinel works without admin rights, but BitLocker, TPM and some Defender
-> queries return `UNKNOWN` unless it's running as Administrator.
+> **Run elevated.** Sentinel works without admin rights (and still detects TPM presence/version),
+> but BitLocker and some Defender/TPM detail return `UNKNOWN` unless it's running as Administrator —
+> which marks the score **INCOMPLETE**. Run as Administrator for a full, trustworthy score.
 
 ## What it checks
 
 | Area | Checks |
 |------|--------|
 | **System** | Edition / build / display version, model, CPU, RAM, BIOS/UEFI, pending reboot |
-| **Boot & platform** | Firmware mode (UEFI/BIOS), Secure Boot, TPM presence / readiness / version / lockout |
+| **Boot & platform** | Firmware mode (UEFI/BIOS), Secure Boot, and the full TPM state matrix — absent / v1.2 / v2.0 / disabled / not-ready / ready / locked-out (presence & version detected even without admin) |
 | **Storage** | Physical disk health, Storage Spaces pools & virtual disks, resiliency, volume health, disk→volume mapping |
-| **BitLocker** | OS + data volume encryption state, protection status, %, method, key protectors, recovery protector, auto-unlock |
+| **BitLocker** | OS + data volume encryption state, protection status, %, **encryption strength (XTS-AES-256 vs weaker)**, **key-protector quality (TPM+PIN > TPM-only > password/recovery)**, recovery protector, auto-unlock |
 | **Virtualisation security** | VBS, Memory Integrity / HVCI, Credential Guard, Secure Launch, kernel-mode HW stack protection |
 | **Windows security** | LSA protection (RunAsPPL), Code Integrity policy |
 | **Antivirus** | Registered products, Defender mode, real-time & behaviour monitoring, signatures, Tamper Protection |
@@ -106,23 +111,40 @@ Written to the output directory, stamped with hostname + timestamp:
 
 ## The integrity score
 
-A single 0–100 number, weighted so warnings sting less than failures:
+The score is **not** an average of pass/fail counts (that lets 20 healthy disks bury a disabled
+Secure Boot). It's a **risk-weighted, control-based model with hard-fail caps**, in the spirit of
+Microsoft Secure Score and FAIR-CAM: each genuine security control carries a *weight* (its share of
+the score) and, if critical, a *cap* (the highest score the machine may earn while that control is
+failing). Informational checks — disk/volume health, system inventory, AV product lists — carry **no
+weight** and never touch the score.
 
 ```
-score = 100 × (PASS + 0.5 × WARN) / (PASS + WARN + FAIL)
+outcome:  PASS → 1.0   WARN → 0.5   FAIL → 0.0   UNKNOWN → excluded
+base   = 100 × Σ(weight × outcome) / Σ(weight over known controls)
+score  = min(base, lowest Cap among all FAILING critical controls)
 ```
 
-`INFO` and `UNKNOWN` are excluded — they aren't judgements. The score maps to a band:
+So an **unencrypted OS drive alone caps the whole machine at 35** — no number of healthy disks can
+rescue it. Caps stack by taking the minimum. Emphasis is on **theft + malware resilience**:
+encryption, Secure Boot, TPM, Defender and the firewall dominate the weights.
 
 | Score | Band | Meaning |
 |-------|------|---------|
 | 90–100 | **HARDENED** | Strong. Remaining items are refinements. |
 | 75–89 | **FORTIFIED** | Solid baseline, a few gaps to close. |
-| 60–74 | **GUARDED** | Adequate, but protections are off or mis-firing. |
+| 60–74 | **GUARDED** | Adequate, but core protections need attention. |
 | 40–59 | **EXPOSED** | Core protections missing — start with the FAILs. |
-| 0–39 | **COMPROMISED** | Critical protections absent. Treat as at-risk. |
+| 20–39 | **AT RISK** | Critical protections off. A soft target. |
+| 0–19 | **CRITICAL** | Fundamental protections absent. |
 
-Tune the weighting in `Get-PostureBand` and the score block near the summary.
+**Coverage & INCOMPLETE.** Without elevation, Sentinel can't read BitLocker (and some Defender/TPM
+detail). Rather than pretend, it reports a **coverage %**, marks the band **INCOMPLETE**, and refuses
+the two green bands until you re-run as Administrator — a mostly-unreadable machine can never look
+hardened. (TPM *presence* and *version* are still detected without admin via the security-device
+enumeration, so a real TPM 2.0 is never mis-reported as missing.)
+
+Tune the weights and caps in the `$Map` table inside `Get-PostureAssessment`, and the bands in
+`Get-PostureBand`.
 
 ## Requirements & safety
 

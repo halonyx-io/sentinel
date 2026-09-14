@@ -12,6 +12,7 @@
 
 **A read-only Windows hardening auditor that scores your box and hands you a cyberpunk report.**
 
+[![tests](https://github.com/zataraine/sentinel/actions/workflows/tests.yml/badge.svg)](https://github.com/zataraine/sentinel/actions/workflows/tests.yml)
 ![PowerShell](https://img.shields.io/badge/PowerShell-5.1%20%7C%207%2B-5391FE?logo=powershell&logoColor=white)
 ![Platform](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-0078D6?logo=windows&logoColor=white)
 ![Read only](https://img.shields.io/badge/mode-read--only-2fe38f)

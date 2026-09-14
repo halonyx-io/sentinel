@@ -88,7 +88,11 @@
   .ring .score{font-family:"Chakra Petch",sans-serif;font-weight:700;font-size:60px;line-height:1;color:#fff;
     text-shadow:0 0 18px rgba(61,240,255,.5)}
   .ring .score small{font-size:20px;color:var(--dim);font-weight:400}
-  .ring .band{font-family:"Chakra Petch",sans-serif;letter-spacing:.2em;font-size:13px;margin-top:8px;font-weight:600}
+  .ring .band{font-family:"Chakra Petch",sans-serif;letter-spacing:.2em;font-size:13px;margin-top:8px;font-weight:600;
+    max-width:190px;margin-left:auto;margin-right:auto;line-height:1.35;text-align:center}
+  .ring .band .inc{display:block;width:max-content;margin:5px auto 0;font-size:9px;letter-spacing:.18em;
+    font-weight:700;color:var(--warn);border:1px solid rgba(255,194,77,.55);border-radius:2px;padding:1px 6px;
+    text-shadow:none}
   .gauge .sub{font-size:11px;color:var(--faint);margin-top:14px;letter-spacing:.06em;max-width:230px}
 
   /* ---- stat tiles + distribution ---- */
@@ -123,6 +127,15 @@
   .hf-row+.hf-row{border-top:1px solid rgba(255,67,104,.14)}
   .hf-cap{flex:none;min-width:44px;text-align:center;font-family:"Chakra Petch",sans-serif;font-weight:700;
     color:var(--fail);border:1px solid rgba(255,67,104,.4);border-radius:2px;padding:2px 6px;font-size:12px}
+
+  /* ---- not-evaluated callout ---- */
+  .noteval{margin-top:16px;border:1px solid rgba(185,140,255,.42);border-radius:4px;
+    background:linear-gradient(180deg,rgba(185,140,255,.10),rgba(185,140,255,.03));padding:14px 16px}
+  .noteval h3{margin:0 0 10px;font-family:"Chakra Petch",sans-serif;font-weight:600;font-size:12px;
+    letter-spacing:.16em;text-transform:uppercase;color:var(--unknown)}
+  .ne-cap{flex:none;min-width:44px;text-align:center;font-family:"Chakra Petch",sans-serif;font-weight:700;
+    color:var(--unknown);border:1px solid rgba(185,140,255,.42);border-radius:2px;padding:2px 6px;font-size:12px}
+  .ne-foot{margin:10px 0 0;font-size:11px;line-height:1.6;color:var(--dim)}
 
   /* ---- filter bar ---- */
   .toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin:26px 0 14px}
@@ -270,8 +283,8 @@
    Injected at export time by New-HtmlReport (from $Report | ConvertTo-Json).
    ============================================================ */
 const REPORT = {
-  "SchemaVersion": "3.0",
-  "GeneratedAt": "2026-09-02T14:55:48.4153686+08:00",
+  "SchemaVersion": "3.1",
+  "GeneratedAt": "2026-09-15T00:17:51.3994329+08:00",
   "ComputerName": "NX-RONIN-01",
   "UserName": "operator",
   "Administrator": true,
@@ -282,25 +295,32 @@ const REPORT = {
   "Incomplete": false,
   "HardFails": [
     {
-      "Category": "BitLocker",
+      "Category": "Encryption",
       "Check": "OS volume C:",
       "Cap": 35,
       "Critical": true
+    },
+    {
+      "Category": "Encryption",
+      "Check": "Data volume D:",
+      "Cap": 65,
+      "Critical": false
     }
   ],
+  "NotEvaluated": [],
   "Summary": {
     "Pass": 24,
-    "Warn": 3,
-    "Fail": 1,
+    "Warn": 2,
+    "Fail": 2,
     "Unknown": 0,
-    "Info": 5
+    "Info": 6
   },
   "Checks": [
     {
       "Category": "System",
       "Check": "Operating system",
       "Status": "INFO",
-      "Value": "Windows 11 Pro 24H2 (Build 26100.1742)",
+      "Value": "Windows 11 Home 24H2 (Build 26100.1742)",
       "Expected": "",
       "Details": ""
     },
@@ -317,6 +337,14 @@ const REPORT = {
       "Check": "Installed memory",
       "Status": "INFO",
       "Value": "32 GB",
+      "Expected": "",
+      "Details": ""
+    },
+    {
+      "Category": "System",
+      "Check": "Chassis",
+      "Status": "INFO",
+      "Value": "Portable (laptop/tablet)",
       "Expected": "",
       "Details": ""
     },
@@ -350,7 +378,7 @@ const REPORT = {
       "Status": "PASS",
       "Value": "Yes (TPM 2.0)",
       "Expected": "Yes",
-      "Details": "Detected via Get-Tpm."
+      "Details": "Detected via PnP security device."
     },
     {
       "Category": "TPM",
@@ -367,6 +395,22 @@ const REPORT = {
       "Value": "Yes",
       "Expected": "",
       "Details": ""
+    },
+    {
+      "Category": "Encryption",
+      "Check": "OS volume C:",
+      "Status": "FAIL",
+      "Value": "FullyDecrypted; Protection=Off; None",
+      "Expected": "Fully encrypted; protection On",
+      "Details": "Operating-system volume is NOT encrypted. This is a portable device - unencrypted storage is exposed the moment it is lost or stolen."
+    },
+    {
+      "Category": "Encryption",
+      "Check": "Data volume D:",
+      "Status": "FAIL",
+      "Value": "FullyDecrypted; Protection=Off; None",
+      "Expected": "Encrypted if sensitive data is stored here",
+      "Details": "Mounted fixed data volume is NOT encrypted. Data at rest on this drive is readable by anyone who removes it."
     },
     {
       "Category": "Storage Health",
@@ -391,22 +435,6 @@ const REPORT = {
       "Value": "Healthy",
       "Expected": "",
       "Details": "NTFS; 1863 GB"
-    },
-    {
-      "Category": "BitLocker",
-      "Check": "OS volume C:",
-      "Status": "FAIL",
-      "Value": "FullyDecrypted; Protection=Off; 0%; None",
-      "Expected": "Fully encrypted; protection On",
-      "Details": "Operating-system volume is not encrypted. A stolen or lost machine gives up all its data."
-    },
-    {
-      "Category": "BitLocker",
-      "Check": "Data volume D:",
-      "Status": "WARN",
-      "Value": "FullyDecrypted; Protection=Off; 0%; None",
-      "Expected": "Encrypted if sensitive data is stored here",
-      "Details": "Mounted fixed data volume is not encrypted."
     },
     {
       "Category": "Virtualisation Security",
@@ -449,11 +477,11 @@ const REPORT = {
       "Details": ""
     },
     {
-      "Category": "Defender",
-      "Check": "Defender running mode",
+      "Category": "Antivirus",
+      "Check": "Real-time antivirus protection",
       "Status": "PASS",
-      "Value": "Normal / Active",
-      "Expected": "",
+      "Value": "Active: Microsoft Defender",
+      "Expected": "An active, up-to-date real-time antivirus",
       "Details": ""
     },
     {
@@ -572,7 +600,7 @@ const REPORT = {
 };
 
 /* ---------- ordering + helpers ---------- */
-const CAT_ORDER=["System","Boot Security","TPM","BitLocker","Storage Health",
+const CAT_ORDER=["System","Boot Security","TPM","Encryption","Storage Health",
   "Virtualisation Security","Credential Protection","Antivirus","Defender","Firewall",
   "SMB Security","Remote Access","Privilege Protection","Collection"];
 const SEV=["FAIL","WARN","UNKNOWN","INFO","PASS"];
@@ -593,6 +621,7 @@ const incomplete=!!REPORT.Incomplete;
 const coverage=REPORT.Coverage!=null?REPORT.Coverage:100;
 const verdict=REPORT.Verdict||"";
 const hardFails=REPORT.HardFails||[];
+const notEvaluated=REPORT.NotEvaluated||[];
 
 /* ---------- banner ---------- */
 const $=id=>document.getElementById(id);
@@ -607,7 +636,7 @@ $("m-time").textContent=tstr; $("f-time").textContent=tstr;
 
 /* ---------- gauge ---------- */
 const bandEl=$("band");
-bandEl.textContent=incomplete?bandName+" · INCOMPLETE":bandName;
+bandEl.innerHTML=esc(bandName)+(incomplete?'<span class="inc">INCOMPLETE</span>':"");
 bandEl.style.color=bandCol;
 bandEl.style.textShadow="0 0 12px "+bandCol;
 $("verdict").innerHTML=esc(verdict)+(incomplete
@@ -637,6 +666,19 @@ if(hardFails.length){
     `<span class="hf-name">${esc(h.Category)} / ${esc(h.Check)}</span></div>`).join("");
   const tb=document.querySelector(".toolbar");
   tb.parentNode.insertBefore(hf,tb);
+}
+
+/* ---------- blind spots (controls never assessed) ---------- */
+if(notEvaluated.length){
+  const ne=document.createElement("div");
+  ne.className="noteval";
+  ne.innerHTML=`<h3>&#9633; NOT EVALUATED — blind spots, treated as unsafe</h3>`+notEvaluated.map(n=>
+    `<div class="hf-row"><span class="ne-cap">${n.Critical?"&#8804;"+n.Cap:"—"}</span>`+
+    `<span class="hf-name">${esc(n.Category)} / ${esc(n.Control)}</span></div>`).join("")+
+    `<p class="ne-foot">These controls produced no result, so Sentinel could not confirm them. `+
+    `They are never counted as passes — critical ones cap the score exactly as a failure would.</p>`;
+  const tb2=document.querySelector(".toolbar");
+  tb2.parentNode.insertBefore(ne,tb2);
 }
 
 /* ---------- stat tiles ---------- */

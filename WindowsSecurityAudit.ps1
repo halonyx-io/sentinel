@@ -649,6 +649,216 @@ function Test-PendingReboot {
 
 
 # ============================================================================
+# ENCRYPTION DISCOVERY HELPERS
+#
+# A machine without the BitLocker cmdlets is NOT an unencrypted machine.
+# Windows Home ships "Device Encryption" (same underlying WMI provider), and
+# any edition may be encrypted by a third-party full-disk-encryption product.
+# These helpers exist so Sentinel looks harder before it ever says "unknown",
+# and so it never reports "not encrypted" on the basis of a missing cmdlet.
+# ============================================================================
+
+function Get-EncryptableVolumeInfo {
+
+    # Win32_EncryptableVolume is the provider behind BOTH BitLocker and
+    # Windows Device Encryption, and it exists on Windows Home.
+    param(
+        [string]$DriveLetter
+    )
+
+    try {
+
+        $Volumes =
+            @(
+                Get-CimInstance `
+                    -Namespace 'Root\CIMv2\Security\MicrosoftVolumeEncryption' `
+                    -ClassName Win32_EncryptableVolume `
+                    -ErrorAction Stop
+            )
+    }
+    catch {
+        return $null
+    }
+
+    if ($DriveLetter) {
+
+        $Wanted = $DriveLetter.TrimEnd('\')
+
+        $Volumes =
+            @(
+                $Volumes |
+                Where-Object {
+                    ([string](
+                        Get-PropertyValue -Object $_ -Property 'DriveLetter'
+                    )).TrimEnd('\') -ieq $Wanted
+                }
+            )
+    }
+
+    if ($Volumes.Count -eq 0) {
+        return $null
+    }
+
+    $ConversionMap = @{
+        0 = 'FullyDecrypted'
+        1 = 'FullyEncrypted'
+        2 = 'EncryptionInProgress'
+        3 = 'DecryptionInProgress'
+        4 = 'EncryptionPaused'
+        5 = 'DecryptionPaused'
+    }
+
+    $MethodMap = @{
+        0 = 'None'
+        1 = 'AES-128 with diffuser'
+        2 = 'AES-256 with diffuser'
+        3 = 'AES-CBC-128'
+        4 = 'AES-CBC-256'
+        5 = 'Hardware encryption'
+        6 = 'XTS-AES-128'
+        7 = 'XTS-AES-256'
+    }
+
+    $Results = @()
+
+    foreach ($V in $Volumes) {
+
+        $Prot = Get-PropertyValue -Object $V -Property 'ProtectionStatus'
+        $Conv = Get-PropertyValue -Object $V -Property 'ConversionStatus'
+        $Meth = Get-PropertyValue -Object $V -Property 'EncryptionMethod'
+
+        $ProtText =
+            if ($null -eq $Prot) { 'Unknown' }
+            elseif ([int]$Prot -eq 1) { 'On' }
+            elseif ([int]$Prot -eq 0) { 'Off' }
+            else { 'Unknown' }
+
+        $ConvText =
+            if ($null -ne $Conv -and $ConversionMap.ContainsKey([int]$Conv)) {
+                $ConversionMap[[int]$Conv]
+            }
+            else { 'Unknown' }
+
+        $MethText =
+            if ($null -ne $Meth -and $MethodMap.ContainsKey([int]$Meth)) {
+                $MethodMap[[int]$Meth]
+            }
+            else { 'Unknown' }
+
+        $Results += [PSCustomObject]@{
+            DriveLetter      = [string](Get-PropertyValue -Object $V -Property 'DriveLetter')
+            ProtectionText   = $ProtText
+            ConversionText   = $ConvText
+            EncryptionMethod = $MethText
+        }
+    }
+
+    return $Results
+}
+
+
+function Get-ThirdPartyEncryptionProducts {
+
+    # Presence detection only. Sentinel cannot read the state of a third-party
+    # FDE product, so finding one means "cannot verify", never "encrypted".
+    $Patterns = @(
+        'VeraCrypt', 'TrueCrypt', 'DiskCryptor', 'BestCrypt', 'Jetico',
+        'Cryptomator', 'SafeGuard', 'Sophos.*Encryption', 'ESET.*Encryption',
+        'DESlock', 'McAfee.*Encryption', 'Trellix.*Encryption',
+        'Endpoint Encryption', 'Symantec.*Encryption', 'PGP.*(Desktop|Disk)',
+        'Check ?Point.*Encryption', 'Dell.*(Data Protection|Encryption)',
+        'Credant', 'WinMagic', 'SecureDoc', 'Full Disk Encryption'
+    )
+
+    $Found = [System.Collections.Generic.List[string]]::new()
+
+    foreach ($Root in @(
+        'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*',
+        'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*'
+    )) {
+
+        try {
+
+            foreach ($Item in @(
+                Get-ItemProperty -Path $Root -ErrorAction SilentlyContinue
+            )) {
+
+                $Name = [string](
+                    Get-PropertyValue -Object $Item -Property 'DisplayName'
+                )
+                if (-not $Name) { continue }
+
+                foreach ($P in $Patterns) {
+                    if ($Name -match $P) {
+                        if (-not $Found.Contains($Name)) { $Found.Add($Name) }
+                        break
+                    }
+                }
+            }
+        }
+        catch {}
+    }
+
+    try {
+
+        foreach ($Svc in @(
+            Get-CimInstance -ClassName Win32_Service -ErrorAction Stop
+        )) {
+
+            $Disp = [string](Get-PropertyValue -Object $Svc -Property 'DisplayName')
+            $Nm   = [string](Get-PropertyValue -Object $Svc -Property 'Name')
+            $Hay  = "$Disp $Nm"
+
+            foreach ($P in $Patterns) {
+                if ($Hay -match $P) {
+                    $Label = if ($Disp) { $Disp } else { $Nm }
+                    if ($Label -and -not $Found.Contains($Label)) {
+                        $Found.Add($Label)
+                    }
+                    break
+                }
+            }
+        }
+    }
+    catch {}
+
+    return $Found.ToArray()
+}
+
+
+function Test-IsPortableChassis {
+
+    # Laptops/tablets carry far more theft risk, so unencrypted storage on a
+    # portable chassis is called out explicitly.
+    try {
+
+        $Enclosure =
+            Get-CimInstance `
+                -ClassName Win32_SystemEnclosure `
+                -ErrorAction Stop |
+            Select-Object -First 1
+
+        $Types = @(
+            Get-PropertyValue -Object $Enclosure -Property 'ChassisTypes'
+        )
+
+        $Portable = @(8, 9, 10, 11, 12, 14, 18, 21, 30, 31, 32)
+
+        foreach ($T in $Types) {
+            if ($null -ne $T -and $Portable -contains [int]$T) {
+                return $true
+            }
+        }
+
+        return $false
+    }
+    catch {
+        return $null
+    }
+}
+
+
+# ============================================================================
 # PRESENTATION HELPERS (console banner + HTML dashboard)
 # ============================================================================
 
@@ -729,48 +939,55 @@ function Get-PostureAssessment {
         [bool]$IsAdmin = $true
     )
 
-    # Cat = exact Category; Pat = regex on the check name.
-    # W = weight; Cap = score ceiling if this control FAILs; Crit = critical.
+    # Cat  = exact Category; Pat = regex on the check name.
+    # W    = weight; Cap = score ceiling if this control FAILs; Crit = critical.
+    # Req  = this control MUST be assessed on every machine. If no check matches
+    #        it, that is a BLIND SPOT, not a pass: its weight counts against
+    #        coverage, it is listed as NOT EVALUATED, and a critical one applies
+    #        its cap exactly as if it had failed. Absence of evidence is never
+    #        treated as evidence of safety.
+    # Name = human label used in the NOT EVALUATED report.
     $Map = @(
-        @{ Cat = 'Boot Security';           Pat = '^Secure Boot$';                   W = 12; Cap = 55;  Crit = $true }
-        @{ Cat = 'Boot Security';           Pat = '^Firmware boot mode$';            W = 2;  Cap = 100; Crit = $false }
+        @{ Cat = 'Boot Security';           Pat = '^Secure Boot$';                   W = 12; Cap = 55;  Crit = $true;  Req = $true;  Name = 'Secure Boot' }
+        @{ Cat = 'Boot Security';           Pat = '^Firmware boot mode$';            W = 2;  Cap = 100; Crit = $false; Req = $false; Name = 'Firmware boot mode' }
 
-        @{ Cat = 'TPM';                     Pat = '^TPM present$';                   W = 6;  Cap = 70;  Crit = $true }
-        @{ Cat = 'TPM';                     Pat = '^TPM specification$';             W = 2;  Cap = 100; Crit = $false }
-        @{ Cat = 'TPM';                     Pat = '^TPM ready$';                     W = 2;  Cap = 100; Crit = $false }
+        @{ Cat = 'TPM';                     Pat = '^TPM present$';                   W = 6;  Cap = 70;  Crit = $true;  Req = $true;  Name = 'TPM present' }
+        @{ Cat = 'TPM';                     Pat = '^TPM specification$';             W = 2;  Cap = 100; Crit = $false; Req = $false; Name = 'TPM specification' }
+        @{ Cat = 'TPM';                     Pat = '^TPM ready$';                     W = 2;  Cap = 100; Crit = $false; Req = $false; Name = 'TPM ready' }
 
-        @{ Cat = 'BitLocker';               Pat = '^OS volume';                      W = 20; Cap = 35;  Crit = $true }
-        @{ Cat = 'BitLocker';               Pat = '^Data volume';                    W = 8;  Cap = 100; Crit = $false }
-        @{ Cat = 'BitLocker';               Pat = 'encryption strength';             W = 3;  Cap = 100; Crit = $false }
-        @{ Cat = 'BitLocker';               Pat = 'key protector';                   W = 3;  Cap = 100; Crit = $false }
+        @{ Cat = 'Encryption';              Pat = '^OS volume';                      W = 20; Cap = 35;  Crit = $true;  Req = $true;  Name = 'OS drive encryption' }
+        @{ Cat = 'Encryption';              Pat = '^Data volume';                    W = 8;  Cap = 65;  Crit = $false; Req = $false; Name = 'Data drive encryption' }
+        @{ Cat = 'Encryption';              Pat = 'encryption strength';             W = 3;  Cap = 100; Crit = $false; Req = $false; Name = 'Encryption strength' }
+        @{ Cat = 'Encryption';              Pat = 'key protector';                   W = 3;  Cap = 100; Crit = $false; Req = $false; Name = 'Key protector quality' }
 
-        @{ Cat = 'Virtualisation Security'; Pat = '^Virtualization Based Security$'; W = 4;  Cap = 100; Crit = $false }
-        @{ Cat = 'Virtualisation Security'; Pat = '^Memory Integrity';               W = 5;  Cap = 100; Crit = $false }
-        @{ Cat = 'Virtualisation Security'; Pat = '^Credential Guard$';              W = 4;  Cap = 100; Crit = $false }
+        @{ Cat = 'Antivirus';               Pat = '^Real-time antivirus protection$'; W = 8; Cap = 50;  Crit = $true;  Req = $true;  Name = 'Real-time antivirus' }
 
-        @{ Cat = 'Credential Protection';   Pat = '^LSA';                            W = 5;  Cap = 100; Crit = $false }
+        @{ Cat = 'Virtualisation Security'; Pat = '^Virtualization Based Security$'; W = 4;  Cap = 100; Crit = $false; Req = $false; Name = 'VBS' }
+        @{ Cat = 'Virtualisation Security'; Pat = '^Memory Integrity';               W = 5;  Cap = 100; Crit = $false; Req = $false; Name = 'Memory Integrity / HVCI' }
+        @{ Cat = 'Virtualisation Security'; Pat = '^Credential Guard$';              W = 4;  Cap = 100; Crit = $false; Req = $false; Name = 'Credential Guard' }
 
-        @{ Cat = 'Defender';                Pat = '^Real-time protection$';          W = 8;  Cap = 50;  Crit = $true }
-        @{ Cat = 'Defender';                Pat = '^Defender running mode$';         W = 4;  Cap = 100; Crit = $false }
-        @{ Cat = 'Defender';                Pat = '^Behaviour monitoring$';          W = 2;  Cap = 100; Crit = $false }
-        @{ Cat = 'Defender';                Pat = '^Tamper Protection$';             W = 5;  Cap = 100; Crit = $false }
-        @{ Cat = 'Defender';                Pat = '^Downloaded file scanning$';      W = 1;  Cap = 100; Crit = $false }
-        @{ Cat = 'Defender';                Pat = '^Network Inspection System$';     W = 1;  Cap = 100; Crit = $false }
-        @{ Cat = 'Defender';                Pat = '^Signature age$';                 W = 2;  Cap = 100; Crit = $false }
+        @{ Cat = 'Credential Protection';   Pat = '^LSA';                            W = 5;  Cap = 100; Crit = $false; Req = $false; Name = 'LSA protection' }
 
-        @{ Cat = 'Firewall';                Pat = 'profile$';                        W = 3;  Cap = 55;  Crit = $true }
+        @{ Cat = 'Defender';                Pat = '^Real-time protection$';          W = 3;  Cap = 100; Crit = $false; Req = $false; Name = 'Defender real-time' }
+        @{ Cat = 'Defender';                Pat = '^Behaviour monitoring$';          W = 2;  Cap = 100; Crit = $false; Req = $false; Name = 'Behaviour monitoring' }
+        @{ Cat = 'Defender';                Pat = '^Tamper Protection$';             W = 5;  Cap = 100; Crit = $false; Req = $false; Name = 'Tamper Protection' }
+        @{ Cat = 'Defender';                Pat = '^Downloaded file scanning$';      W = 1;  Cap = 100; Crit = $false; Req = $false; Name = 'Downloaded file scanning' }
+        @{ Cat = 'Defender';                Pat = '^Network Inspection System$';     W = 1;  Cap = 100; Crit = $false; Req = $false; Name = 'Network Inspection System' }
+        @{ Cat = 'Defender';                Pat = '^Signature age$';                 W = 2;  Cap = 100; Crit = $false; Req = $false; Name = 'Signature age' }
 
-        @{ Cat = 'SMB Security';            Pat = '^SMBv1';                          W = 5;  Cap = 60;  Crit = $true }
-        @{ Cat = 'SMB Security';            Pat = 'signing required$';               W = 2;  Cap = 100; Crit = $false }
-        @{ Cat = 'SMB Security';            Pat = 'guest logons$';                   W = 2;  Cap = 100; Crit = $false }
+        @{ Cat = 'Firewall';                Pat = 'profile$';                        W = 3;  Cap = 55;  Crit = $true;  Req = $true;  Name = 'Firewall profiles' }
 
-        @{ Cat = 'Privilege Protection';    Pat = '^User Account Control$';          W = 4;  Cap = 60;  Crit = $false }
-        @{ Cat = 'Privilege Protection';    Pat = '^Admin elevation';               W = 2;  Cap = 100; Crit = $false }
-        @{ Cat = 'Privilege Protection';    Pat = 'Secure Desktop$';                 W = 2;  Cap = 100; Crit = $false }
+        @{ Cat = 'SMB Security';            Pat = '^SMBv1';                          W = 5;  Cap = 60;  Crit = $true;  Req = $true;  Name = 'SMBv1 disabled' }
+        @{ Cat = 'SMB Security';            Pat = 'signing required$';               W = 2;  Cap = 100; Crit = $false; Req = $false; Name = 'SMB signing' }
+        @{ Cat = 'SMB Security';            Pat = 'guest logons$';                   W = 2;  Cap = 100; Crit = $false; Req = $false; Name = 'SMB guest logons' }
 
-        @{ Cat = 'Remote Access';           Pat = 'Network Level Authentication$';   W = 4;  Cap = 60;  Crit = $false }
+        @{ Cat = 'Privilege Protection';    Pat = '^User Account Control$';          W = 4;  Cap = 60;  Crit = $false; Req = $true;  Name = 'UAC' }
+        @{ Cat = 'Privilege Protection';    Pat = '^Admin elevation';               W = 2;  Cap = 100; Crit = $false; Req = $false; Name = 'Admin elevation policy' }
+        @{ Cat = 'Privilege Protection';    Pat = 'Secure Desktop$';                 W = 2;  Cap = 100; Crit = $false; Req = $false; Name = 'Secure Desktop' }
 
-        @{ Cat = 'System';                  Pat = '^Pending reboot$';                W = 1;  Cap = 100; Crit = $false }
+        @{ Cat = 'Remote Access';           Pat = 'Network Level Authentication$';   W = 4;  Cap = 60;  Crit = $false; Req = $false; Name = 'RDP NLA' }
+
+        @{ Cat = 'System';                  Pat = '^Pending reboot$';                W = 1;  Cap = 100; Crit = $false; Req = $false; Name = 'Pending reboot' }
     )
 
     $Outcome = @{ 'PASS' = 1.0; 'WARN' = 0.5; 'FAIL' = 0.0 }
@@ -781,15 +998,23 @@ function Get-PostureAssessment {
     $WeightKnown = 0.0
     $CriticalUnknown = $false
 
-    $Caps = New-Object System.Collections.Generic.List[int]
-    $HardFails = New-Object System.Collections.Generic.List[object]
+    # Use ::new() rather than New-Object: on PowerShell 7.6 a generic List built
+    # via New-Object breaks the @() array operator ("Argument types do not match").
+    $Caps = [System.Collections.Generic.List[int]]::new()
+    $HardFails = [System.Collections.Generic.List[object]]::new()
+
+    # Tracks which map entries were actually exercised by a real check, so an
+    # absent control can be told apart from a passing one.
+    $Assessed = @{}
 
     foreach ($Check in $Checks) {
 
         $Entry = $null
-        foreach ($M in $Map) {
-            if ($Check.Category -eq $M.Cat -and $Check.Check -match $M.Pat) {
-                $Entry = $M
+        $Index = -1
+        for ($i = 0; $i -lt $Map.Count; $i++) {
+            if ($Check.Category -eq $Map[$i].Cat -and $Check.Check -match $Map[$i].Pat) {
+                $Entry = $Map[$i]
+                $Index = $i
                 break
             }
         }
@@ -800,15 +1025,18 @@ function Get-PostureAssessment {
         if ($W -le 0) { continue }
 
         if ($Check.Status -eq 'UNKNOWN') {
+            $Assessed[$Index] = $true
             $WeightTotal += $W
             if ($Entry.Crit) { $CriticalUnknown = $true }
             continue
         }
 
         # INFO (or any non-scored status) is ignored entirely - it must not
-        # count toward the coverage denominator or the score.
+        # count toward the coverage denominator or the score, and it does NOT
+        # count as having assessed the control.
         if (-not $Outcome.ContainsKey($Check.Status)) { continue }
 
+        $Assessed[$Index] = $true
         $WeightTotal += $W
         $WeightKnown += $W
         $Avail += $W
@@ -824,6 +1052,36 @@ function Get-PostureAssessment {
                     Critical = [bool]$Entry.Crit
                 }
             )
+        }
+    }
+
+    # ---- BLIND SPOTS -------------------------------------------------------
+    # Any REQUIRED control that produced no usable check was never assessed.
+    # Treat it as an unknown risk, never as a pass: it counts against coverage,
+    # is reported explicitly, and if critical it applies its cap like a failure.
+    $NotEvaluated = [System.Collections.Generic.List[object]]::new()
+
+    for ($i = 0; $i -lt $Map.Count; $i++) {
+
+        $M = $Map[$i]
+        if (-not $M.Req) { continue }
+        if ($Assessed.ContainsKey($i)) { continue }
+
+        $WeightTotal += [double]$M.W
+
+        $NotEvaluated.Add(
+            [PSCustomObject]@{
+                Control  = [string]$M.Name
+                Category = [string]$M.Cat
+                Weight   = [int]$M.W
+                Critical = [bool]$M.Crit
+                Cap      = [int]$M.Cap
+            }
+        )
+
+        if ($M.Crit) {
+            $CriticalUnknown = $true
+            $Caps.Add([int]$M.Cap)
         }
     }
 
@@ -849,12 +1107,14 @@ function Get-PostureAssessment {
         ($Coverage -lt 80)
     )
 
-    $Band = Get-PostureBand -Score $Score
-
-    # Never award a green band on incomplete evidence.
+    # Never award a green band - or a green-looking number - on incomplete
+    # evidence. An un-assessed machine is capped at GUARDED until it is
+    # actually assessed.
     if ($Incomplete -and $Score -gt 74) {
-        $Band = Get-PostureBand -Score 74
+        $Score = 74
     }
+
+    $Band = Get-PostureBand -Score $Score
 
     # Sort hard fails: critical first, then by lowest cap.
     $HardFailsSorted = @(
@@ -863,13 +1123,14 @@ function Get-PostureAssessment {
     )
 
     return [PSCustomObject]@{
-        Score      = $Score
-        Band       = $Band.Name
-        Colour     = $Band.Colour
-        Verdict    = $Band.Verdict
-        Coverage   = $Coverage
-        Incomplete = [bool]$Incomplete
-        HardFails  = $HardFailsSorted
+        Score        = $Score
+        Band         = $Band.Name
+        Colour       = $Band.Colour
+        Verdict      = $Band.Verdict
+        Coverage     = $Coverage
+        Incomplete   = [bool]$Incomplete
+        HardFails    = $HardFailsSorted
+        NotEvaluated = @($NotEvaluated)
     }
 }
 
@@ -924,6 +1185,7 @@ function Write-PostureGauge {
         [int]$Coverage = 100,
         [bool]$Incomplete = $false,
         [object[]]$HardFails = @(),
+        [object[]]$NotEvaluated = @(),
         $Summary
     )
 
@@ -960,6 +1222,19 @@ function Write-PostureGauge {
                 '    x ' + $HF.Category + ' / ' + $HF.Check +
                 '  -> score capped at ' + $HF.Cap
             ) -ForegroundColor Red
+        }
+    }
+
+    if ($NotEvaluated.Count -gt 0) {
+        Write-Host ''
+        Write-Host '  NOT EVALUATED (blind spots - treated as unsafe, not as passes):' -ForegroundColor Magenta
+        foreach ($NE in $NotEvaluated) {
+            $Suffix =
+                if ($NE.Critical) { '  -> critical; score capped at ' + $NE.Cap }
+                else { '' }
+            Write-Host (
+                '    ? ' + $NE.Category + ' / ' + $NE.Control + $Suffix
+            ) -ForegroundColor Magenta
         }
     }
 
@@ -1079,7 +1354,11 @@ function New-HtmlReport {
   .ring .score{font-family:"Chakra Petch",sans-serif;font-weight:700;font-size:60px;line-height:1;color:#fff;
     text-shadow:0 0 18px rgba(61,240,255,.5)}
   .ring .score small{font-size:20px;color:var(--dim);font-weight:400}
-  .ring .band{font-family:"Chakra Petch",sans-serif;letter-spacing:.2em;font-size:13px;margin-top:8px;font-weight:600}
+  .ring .band{font-family:"Chakra Petch",sans-serif;letter-spacing:.2em;font-size:13px;margin-top:8px;font-weight:600;
+    max-width:190px;margin-left:auto;margin-right:auto;line-height:1.35;text-align:center}
+  .ring .band .inc{display:block;width:max-content;margin:5px auto 0;font-size:9px;letter-spacing:.18em;
+    font-weight:700;color:var(--warn);border:1px solid rgba(255,194,77,.55);border-radius:2px;padding:1px 6px;
+    text-shadow:none}
   .gauge .sub{font-size:11px;color:var(--faint);margin-top:14px;letter-spacing:.06em;max-width:230px}
 
   /* ---- stat tiles + distribution ---- */
@@ -1114,6 +1393,15 @@ function New-HtmlReport {
   .hf-row+.hf-row{border-top:1px solid rgba(255,67,104,.14)}
   .hf-cap{flex:none;min-width:44px;text-align:center;font-family:"Chakra Petch",sans-serif;font-weight:700;
     color:var(--fail);border:1px solid rgba(255,67,104,.4);border-radius:2px;padding:2px 6px;font-size:12px}
+
+  /* ---- not-evaluated callout ---- */
+  .noteval{margin-top:16px;border:1px solid rgba(185,140,255,.42);border-radius:4px;
+    background:linear-gradient(180deg,rgba(185,140,255,.10),rgba(185,140,255,.03));padding:14px 16px}
+  .noteval h3{margin:0 0 10px;font-family:"Chakra Petch",sans-serif;font-weight:600;font-size:12px;
+    letter-spacing:.16em;text-transform:uppercase;color:var(--unknown)}
+  .ne-cap{flex:none;min-width:44px;text-align:center;font-family:"Chakra Petch",sans-serif;font-weight:700;
+    color:var(--unknown);border:1px solid rgba(185,140,255,.42);border-radius:2px;padding:2px 6px;font-size:12px}
+  .ne-foot{margin:10px 0 0;font-size:11px;line-height:1.6;color:var(--dim)}
 
   /* ---- filter bar ---- */
   .toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin:26px 0 14px}
@@ -1263,7 +1551,7 @@ function New-HtmlReport {
 const REPORT = @@REPORT_JSON@@;
 
 /* ---------- ordering + helpers ---------- */
-const CAT_ORDER=["System","Boot Security","TPM","BitLocker","Storage Health",
+const CAT_ORDER=["System","Boot Security","TPM","Encryption","Storage Health",
   "Virtualisation Security","Credential Protection","Antivirus","Defender","Firewall",
   "SMB Security","Remote Access","Privilege Protection","Collection"];
 const SEV=["FAIL","WARN","UNKNOWN","INFO","PASS"];
@@ -1284,6 +1572,7 @@ const incomplete=!!REPORT.Incomplete;
 const coverage=REPORT.Coverage!=null?REPORT.Coverage:100;
 const verdict=REPORT.Verdict||"";
 const hardFails=REPORT.HardFails||[];
+const notEvaluated=REPORT.NotEvaluated||[];
 
 /* ---------- banner ---------- */
 const $=id=>document.getElementById(id);
@@ -1298,7 +1587,7 @@ $("m-time").textContent=tstr; $("f-time").textContent=tstr;
 
 /* ---------- gauge ---------- */
 const bandEl=$("band");
-bandEl.textContent=incomplete?bandName+" · INCOMPLETE":bandName;
+bandEl.innerHTML=esc(bandName)+(incomplete?'<span class="inc">INCOMPLETE</span>':"");
 bandEl.style.color=bandCol;
 bandEl.style.textShadow="0 0 12px "+bandCol;
 $("verdict").innerHTML=esc(verdict)+(incomplete
@@ -1328,6 +1617,19 @@ if(hardFails.length){
     `<span class="hf-name">${esc(h.Category)} / ${esc(h.Check)}</span></div>`).join("");
   const tb=document.querySelector(".toolbar");
   tb.parentNode.insertBefore(hf,tb);
+}
+
+/* ---------- blind spots (controls never assessed) ---------- */
+if(notEvaluated.length){
+  const ne=document.createElement("div");
+  ne.className="noteval";
+  ne.innerHTML=`<h3>&#9633; NOT EVALUATED — blind spots, treated as unsafe</h3>`+notEvaluated.map(n=>
+    `<div class="hf-row"><span class="ne-cap">${n.Critical?"&#8804;"+n.Cap:"—"}</span>`+
+    `<span class="hf-name">${esc(n.Category)} / ${esc(n.Control)}</span></div>`).join("")+
+    `<p class="ne-foot">These controls produced no result, so Sentinel could not confirm them. `+
+    `They are never counted as passes — critical ones cap the score exactly as a failure would.</p>`;
+  const tb2=document.querySelector(".toolbar");
+  tb2.parentNode.insertBefore(ne,tb2);
 }
 
 /* ---------- stat tiles ---------- */
@@ -3105,7 +3407,7 @@ if (Test-CommandExists 'Get-BitLockerVolume') {
     catch {
 
         Add-Check `
-            -Category 'BitLocker' `
+            -Category 'Encryption' `
             -Name 'BitLocker bulk enumeration' `
             -Status 'WARN' `
             -Value 'Bulk query failed; using mounted-volume fallback' `
@@ -3148,7 +3450,7 @@ if (Test-CommandExists 'Get-BitLockerVolume') {
             catch {
 
                 Add-Check `
-                    -Category 'BitLocker' `
+                    -Category 'Encryption' `
                     -Name (
                         "Volume " +
                         $Volume.MountPoint
@@ -3322,6 +3624,20 @@ if (Test-CommandExists 'Get-BitLockerVolume') {
             )
 
 
+        # Never trust VolumeType alone. If the provider returns it blank or
+        # unexpected, an unencrypted OS drive would be mis-scored as a mere
+        # data drive and dodge the critical cap. Pin it to the real system
+        # drive as well.
+        $IsOSVolume =
+            (
+                $VolumeType -eq 'OperatingSystem' -or
+                (
+                    $MountPoint -and
+                    $MountPoint.TrimEnd('\') -ieq ([string]$env:SystemDrive).TrimEnd('\')
+                )
+            )
+
+
         $FullyEncrypted =
             (
                 $VolumeStatus -eq 'FullyEncrypted' -or
@@ -3367,7 +3683,7 @@ if (Test-CommandExists 'Get-BitLockerVolume') {
                 'Encryption is not complete.'
         }
         elseif (
-            $VolumeType -eq 'OperatingSystem'
+            $IsOSVolume
         ) {
 
             $BLStatus = 'FAIL'
@@ -3385,9 +3701,11 @@ if (Test-CommandExists 'Get-BitLockerVolume') {
         }
         elseif ($IsVisibleFixed) {
 
-            $BLStatus = 'WARN'
+            # A mounted fixed data volume holding plaintext data is a real
+            # exposure, not a nicety: it carries its own hard-fail cap.
+            $BLStatus = 'FAIL'
             $BLDetails =
-                'Mounted fixed data volume is not encrypted.'
+                'Mounted fixed data volume is NOT encrypted. Data at rest on this drive is readable by anyone who removes it.'
         }
         else {
 
@@ -3409,12 +3727,12 @@ if (Test-CommandExists 'Get-BitLockerVolume') {
         # OS vs data label drives the weighted score (OS encryption is a
         # critical, hard-capped control; data volumes weigh less).
         $VolumeRole =
-            if ($VolumeType -eq 'OperatingSystem') { 'OS volume' }
+            if ($IsOSVolume) { 'OS volume' }
             else { 'Data volume' }
 
 
         Add-Check `
-            -Category 'BitLocker' `
+            -Category 'Encryption' `
             -Name "$VolumeRole $DisplayMount" `
             -Status $BLStatus `
             -Value (
@@ -3425,7 +3743,7 @@ if (Test-CommandExists 'Get-BitLockerVolume') {
             ) `
             -Expected $(
                 if (
-                    $VolumeType -eq 'OperatingSystem'
+                    $IsOSVolume
                 ) {
                     'Fully encrypted; protection On'
                 }
@@ -3468,7 +3786,7 @@ if (Test-CommandExists 'Get-BitLockerVolume') {
                 }
 
             Add-Check `
-                -Category 'BitLocker' `
+                -Category 'Encryption' `
                 -Name "Encryption strength $DisplayMount" `
                 -Status $EncStatus `
                 -Value $EncPretty `
@@ -3511,7 +3829,7 @@ if (Test-CommandExists 'Get-BitLockerVolume') {
             }
 
             Add-Check `
-                -Category 'BitLocker' `
+                -Category 'Encryption' `
                 -Name "Key protector $DisplayMount" `
                 -Status $KPStatus `
                 -Value $KPValue `
@@ -3589,10 +3907,11 @@ if (Test-CommandExists 'Get-BitLockerVolume') {
                 @(
                     $script:Checks |
                     Where-Object {
-                        $_.Category -eq 'BitLocker' -and
-                        $_.Check -eq (
-                            "Volume " +
-                            $Volume.MountPoint
+                        $_.Category -eq 'Encryption' -and
+                        $_.Check -match (
+                            '(^|\s)' +
+                            [regex]::Escape([string]$Volume.MountPoint) +
+                            '$'
                         )
                     }
                 ).Count -gt 0
@@ -3601,7 +3920,7 @@ if (Test-CommandExists 'Get-BitLockerVolume') {
             if (-not $AlreadyReported) {
 
                 Add-Check `
-                    -Category 'BitLocker' `
+                    -Category 'Encryption' `
                     -Name (
                         "Volume " +
                         $Volume.MountPoint
@@ -3624,10 +3943,128 @@ if (Test-CommandExists 'Get-BitLockerVolume') {
 else {
 
     Add-Check `
-        -Category 'BitLocker' `
+        -Category 'Encryption' `
         -Name 'BitLocker provider' `
-        -Status 'UNKNOWN' `
-        -Value 'Get-BitLockerVolume is unavailable'
+        -Status 'INFO' `
+        -Value 'Get-BitLockerVolume is unavailable' `
+        -Details (
+            'Normal on Windows Home. Encryption is resolved below via the ' +
+            'Device Encryption WMI provider and third-party FDE detection.'
+        )
+}
+
+
+# ============================================================================
+# ENCRYPTION FALLBACK LADDER
+#
+# Guarantees the OS-drive encryption control is always ATTEMPTED, on every
+# edition. Runs only when the BitLocker path above produced no usable
+# OS-volume verdict (Windows Home, missing cmdlets, failed enumeration).
+# ============================================================================
+
+$OSDrive = [string]$env:SystemDrive
+if (-not $OSDrive) { $OSDrive = 'C:' }
+
+$IsPortable = Test-IsPortableChassis
+
+if ($null -ne $IsPortable) {
+
+    Add-Check `
+        -Category 'System' `
+        -Name 'Chassis' `
+        -Status 'INFO' `
+        -Value $(
+            if ($IsPortable) { 'Portable (laptop/tablet)' } else { 'Desktop / fixed' }
+        )
+}
+
+
+$OSEncryptionAssessed =
+    @(
+        $script:Checks |
+        Where-Object {
+            $_.Category -eq 'Encryption' -and
+            $_.Check -match '^OS volume' -and
+            $_.Status -in @('PASS', 'WARN', 'FAIL', 'UNKNOWN')
+        }
+    ).Count -gt 0
+
+
+if (-not $OSEncryptionAssessed) {
+
+    $PortableNote =
+        if ($IsPortable) {
+            ' This is a portable device - unencrypted storage is exposed the moment it is lost or stolen.'
+        }
+        else { '' }
+
+    $Fallback = Get-EncryptableVolumeInfo -DriveLetter $OSDrive
+
+    if ($Fallback) {
+
+        $FB = @($Fallback)[0]
+
+        if ($FB.ConversionText -eq 'FullyEncrypted' -and $FB.ProtectionText -eq 'On') {
+            $FBStatus = 'PASS'
+            $FBDetails = 'Encrypted and protected via the Windows volume-encryption provider (BitLocker / Device Encryption).'
+        }
+        elseif ($FB.ConversionText -eq 'FullyEncrypted') {
+            $FBStatus = 'FAIL'
+            $FBDetails = 'Volume is encrypted but protection is suspended/off, so the key is released without authentication.' + $PortableNote
+        }
+        elseif ($FB.ConversionText -match 'InProgress|Paused') {
+            $FBStatus = 'WARN'
+            $FBDetails = 'Encryption is not complete.'
+        }
+        else {
+            $FBStatus = 'FAIL'
+            $FBDetails = 'Operating-system volume is NOT encrypted.' + $PortableNote
+        }
+
+        Add-Check `
+            -Category 'Encryption' `
+            -Name "OS volume $OSDrive" `
+            -Status $FBStatus `
+            -Value "$($FB.ConversionText); Protection=$($FB.ProtectionText); $($FB.EncryptionMethod)" `
+            -Expected 'Fully encrypted; protection On' `
+            -Details $FBDetails
+    }
+    else {
+
+        $ThirdParty = @(Get-ThirdPartyEncryptionProducts)
+
+        if ($ThirdParty.Count -gt 0) {
+
+            Add-Check `
+                -Category 'Encryption' `
+                -Name "OS volume $OSDrive" `
+                -Status 'UNKNOWN' `
+                -Value 'Third-party encryption product detected' `
+                -Expected 'Fully encrypted; protection On' `
+                -Details (
+                    'Detected: ' + ($ThirdParty -join ', ') +
+                    '. Sentinel cannot read the state of third-party full-disk ' +
+                    'encryption - verify manually that this volume is actually ' +
+                    'encrypted and protected.' + $PortableNote
+                )
+        }
+        else {
+
+            Add-Check `
+                -Category 'Encryption' `
+                -Name "OS volume $OSDrive" `
+                -Status 'UNKNOWN' `
+                -Value 'Could not be determined' `
+                -Expected 'Fully encrypted; protection On' `
+                -Details (
+                    'No encryption provider could be queried (the Windows ' +
+                    'volume-encryption WMI class was inaccessible and no ' +
+                    'third-party product was found). Re-run as Administrator. ' +
+                    'Treat this drive as UNENCRYPTED until proven otherwise.' +
+                    $PortableNote
+                )
+        }
+    }
 }
 
 
@@ -4167,6 +4604,137 @@ else {
 
 
 # ============================================================================
+# REAL-TIME ANTIVIRUS  (provider-agnostic)
+#
+# The Defender-specific checks above only fire when Defender is the ACTIVE
+# provider. On a machine running third-party AV, Defender sits in Passive mode
+# and every Defender check is skipped - which used to leave malware protection
+# entirely unscored. This control asks the provider-neutral question instead:
+# is *some* real-time antivirus active and up to date?
+# ============================================================================
+
+$SCProducts = $null
+
+try {
+    $SCProducts =
+        @(
+            Get-CimInstance `
+                -Namespace 'root\SecurityCenter2' `
+                -ClassName AntiVirusProduct `
+                -ErrorAction Stop
+        )
+}
+catch {
+    $SCProducts = $null
+}
+
+
+# Defender's own verdict, taken from the checks already emitted above.
+$DefenderRealTime =
+    @(
+        $script:Checks |
+        Where-Object {
+            $_.Category -eq 'Defender' -and
+            $_.Check -eq 'Real-time protection' -and
+            $_.Status -eq 'PASS'
+        }
+    ).Count -gt 0
+
+
+$ActiveAV = @()
+$StaleAV = @()
+$InactiveAV = @()
+
+if ($null -ne $SCProducts) {
+
+    foreach ($P in $SCProducts) {
+
+        $Name = [string](Get-PropertyValue -Object $P -Property 'displayName')
+        $State = Get-PropertyValue -Object $P -Property 'productState'
+        if (-not $Name -or $null -eq $State) { continue }
+
+        # productState is a packed DWORD: the middle byte carries the
+        # "real-time protection on" bit (0x10); the low byte is 0 when
+        # signatures are current.
+        $Hex = '{0:x6}' -f [int]$State
+        $EnabledByte = [Convert]::ToInt32($Hex.Substring(2, 2), 16)
+        $UpdatedByte = [Convert]::ToInt32($Hex.Substring(4, 2), 16)
+
+        $Enabled = (($EnabledByte -band 0x10) -ne 0)
+        $Current = ($UpdatedByte -eq 0)
+
+        if ($Enabled -and $Current)     { $ActiveAV += $Name }
+        elseif ($Enabled)               { $StaleAV += $Name }
+        else                            { $InactiveAV += $Name }
+    }
+}
+
+
+if ($ActiveAV.Count -gt 0 -or ($DefenderRealTime -and $StaleAV.Count -eq 0 -and $null -eq $SCProducts)) {
+
+    $AVValue =
+        if ($ActiveAV.Count -gt 0) { 'Active: ' + ($ActiveAV -join ', ') }
+        else { 'Active: Microsoft Defender' }
+
+    Add-Check `
+        -Category 'Antivirus' `
+        -Name 'Real-time antivirus protection' `
+        -Status 'PASS' `
+        -Value $AVValue `
+        -Expected 'An active, up-to-date real-time antivirus'
+}
+elseif ($StaleAV.Count -gt 0) {
+
+    Add-Check `
+        -Category 'Antivirus' `
+        -Name 'Real-time antivirus protection' `
+        -Status 'WARN' `
+        -Value ('Active but out of date: ' + ($StaleAV -join ', ')) `
+        -Expected 'An active, up-to-date real-time antivirus' `
+        -Details 'Real-time protection is on but the signatures are stale, so new threats will be missed.'
+}
+elseif ($DefenderRealTime) {
+
+    Add-Check `
+        -Category 'Antivirus' `
+        -Name 'Real-time antivirus protection' `
+        -Status 'PASS' `
+        -Value 'Active: Microsoft Defender' `
+        -Expected 'An active, up-to-date real-time antivirus'
+}
+elseif ($InactiveAV.Count -gt 0) {
+
+    Add-Check `
+        -Category 'Antivirus' `
+        -Name 'Real-time antivirus protection' `
+        -Status 'FAIL' `
+        -Value ('Installed but NOT enabled: ' + ($InactiveAV -join ', ')) `
+        -Expected 'An active, up-to-date real-time antivirus' `
+        -Details 'An antivirus product is registered but its real-time protection is switched off or expired. This machine is effectively unprotected.'
+}
+elseif ($null -ne $SCProducts) {
+
+    Add-Check `
+        -Category 'Antivirus' `
+        -Name 'Real-time antivirus protection' `
+        -Status 'FAIL' `
+        -Value 'No active antivirus found' `
+        -Expected 'An active, up-to-date real-time antivirus' `
+        -Details 'Windows Security Center reports no antivirus with real-time protection enabled.'
+}
+else {
+
+    Add-Check `
+        -Category 'Antivirus' `
+        -Name 'Real-time antivirus protection' `
+        -Status 'UNKNOWN' `
+        -Value 'Could not be determined' `
+        -Expected 'An active, up-to-date real-time antivirus' `
+        -Details 'Windows Security Center was unavailable (normal on Server SKUs) and Defender state could not be read. Re-run as Administrator.'
+}
+
+
+# ============================================================================
 # WINDOWS FIREWALL
 # ============================================================================
 
@@ -4626,6 +5194,7 @@ $ScoreVerdict = $Assessment.Verdict
 $Coverage     = $Assessment.Coverage
 $Incomplete   = $Assessment.Incomplete
 $HardFails    = $Assessment.HardFails
+$NotEvaluated = $Assessment.NotEvaluated
 
 
 $Report = [PSCustomObject]@{
@@ -4661,6 +5230,9 @@ $Report = [PSCustomObject]@{
 
     HardFails =
         @($HardFails)
+
+    NotEvaluated =
+        @($NotEvaluated)
 
     Summary =
         $Summary
@@ -4773,6 +5345,7 @@ if (-not $Quiet) {
         -Coverage $Coverage `
         -Incomplete $Incomplete `
         -HardFails $HardFails `
+        -NotEvaluated $NotEvaluated `
         -Summary $Summary
 
 

@@ -73,10 +73,11 @@ powershell -ExecutionPolicy Bypass -File .\WindowsSecurityAudit.ps1
 | **System** | Edition / build / display version, model, CPU, RAM, BIOS/UEFI, pending reboot |
 | **Boot & platform** | Firmware mode (UEFI/BIOS), Secure Boot, and the full TPM state matrix — absent / v1.2 / v2.0 / disabled / not-ready / ready / locked-out (presence & version detected even without admin) |
 | **Storage** | Physical disk health, Storage Spaces pools & virtual disks, resiliency, volume health, disk→volume mapping |
-| **BitLocker** | OS + data volume encryption state, protection status, %, **encryption strength (XTS-AES-256 vs weaker)**, **key-protector quality (TPM+PIN > TPM-only > password/recovery)**, recovery protector, auto-unlock |
+| **Encryption** | OS + data volume encryption state, protection status, %, **encryption strength (XTS-AES-256 vs weaker)**, **key-protector quality (TPM+PIN > TPM-only > password/recovery)**, recovery protector, auto-unlock. Detection falls back through BitLocker cmdlets → the Device Encryption WMI provider (**works on Windows Home**) → third-party FDE detection (VeraCrypt, ESET, Sophos, Dell, McAfee, …) |
+| **Antivirus** | A provider-agnostic *"is some real-time AV active and up to date?"* control decoded from Windows Security Center — so a passive Defender behind a healthy third-party AV passes, and an expired one fails |
 | **Virtualisation security** | VBS, Memory Integrity / HVCI, Credential Guard, Secure Launch, kernel-mode HW stack protection |
 | **Windows security** | LSA protection (RunAsPPL), Code Integrity policy |
-| **Antivirus** | Registered products, Defender mode, real-time & behaviour monitoring, signatures, Tamper Protection |
+| **Defender detail** | Defender running mode, real-time & behaviour monitoring, downloaded-file scanning, signature age, Tamper Protection |
 | **Network** | Firewall profiles, SMBv1, SMBv2/3, SMB signing, insecure guest logons, RDP + NLA |
 | **Privilege** | UAC, admin elevation policy, Secure Desktop prompting |
 
@@ -124,9 +125,15 @@ base   = 100 × Σ(weight × outcome) / Σ(weight over known controls)
 score  = min(base, lowest Cap among all FAILING critical controls)
 ```
 
-So an **unencrypted OS drive alone caps the whole machine at 35** — no number of healthy disks can
-rescue it. Caps stack by taking the minimum. Emphasis is on **theft + malware resilience**:
-encryption, Secure Boot, TPM, Defender and the firewall dominate the weights.
+So an **unencrypted OS drive alone caps the whole machine at 35**, and an **unencrypted fixed data
+drive caps it at 65** — no number of healthy disks can rescue either. Caps stack by taking the
+minimum. Emphasis is on **theft + malware resilience**: encryption, Secure Boot, TPM, antivirus and
+the firewall dominate the weights.
+
+**Blind spots are never passes.** Every required control that produces *no result at all* — a
+missing cmdlet, a skipped section, a provider that threw — is reported as **NOT EVALUATED**, counted
+against coverage, and if it's critical it applies its cap exactly as a failure would. A machine
+Sentinel couldn't inspect can never score as a machine it inspected and liked.
 
 | Score | Band | Meaning |
 |-------|------|---------|

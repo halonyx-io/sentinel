@@ -5293,7 +5293,9 @@ $NotEvaluated = $Assessment.NotEvaluated
 
 $Report = [PSCustomObject]@{
 
-    SchemaVersion = '3.0'
+    # 3.1 added the scoring fields: Score, Posture, Verdict, Coverage,
+    # Incomplete, HardFails and NotEvaluated.
+    SchemaVersion = '3.1'
 
     GeneratedAt =
         (Get-Date).ToString('o')

@@ -21,8 +21,14 @@ attention reads instantly.
 
 ## What's in it
 
-- **Integrity gauge** — the same 0–100 score as the console, as a sweeping neon ring, with the band
-  (`HARDENED` → `COMPROMISED`) and a one-line verdict.
+- **Integrity gauge** — the same 0–100 score as the console, as a sweeping neon ring coloured by
+  severity, with the band (`HARDENED` → `CRITICAL`) and a one-line verdict.
+- **INCOMPLETE badge + coverage** — when Sentinel couldn't read every critical control (typically an
+  un-elevated run), the gauge says so and the green bands are withheld.
+- **Hard fails callout** — every failing critical control and the score ceiling it imposes, so it's
+  obvious *why* the number is what it is.
+- **Not-evaluated callout** — controls that produced no result at all, stated plainly as blind spots
+  treated as unsafe rather than quietly omitted.
 - **Status tiles** — PASS / WARN / FAIL / UNKNOWN / INFO counts. Click one to filter the whole page
   to just those results.
 - **Distribution bar** — the mix of results at a glance.

@@ -34,16 +34,19 @@ is about the engine and the terminal.
 
 ```
   ==============================================================
-  SYSTEM INTEGRITY  [#######################-------------------]  35/100  AT RISK
+  SYSTEM INTEGRITY  [###############---------------------------]  35/100  AT RISK
   Critical protections are off. This host is a soft target.
 
   HARD FAILS (each caps the score):
-    x BitLocker / OS volume C:   -> score capped at 35
-    x Boot Security / Secure Boot -> score capped at 55
+    x Encryption / OS volume C:  -> score capped at 35
+    x Encryption / Data volume D:  -> score capped at 65
 
-  PASS 24    WARN 3    FAIL 2    UNKNOWN 0    INFO 5
+  PASS 24    WARN 2    FAIL 2    UNKNOWN 0    INFO 6
   ==============================================================
 ```
+
+That machine passes 24 checks. It still scores 35, because its drives are in the clear — which is
+exactly the point.
 
 Findings are grouped by category and colour-coded on the console — green `PASS`, amber `WARN`,
 red `FAIL`, violet `UNKNOWN`, grey `INFO` — with the *why* printed underneath anything that isn't
@@ -106,7 +109,9 @@ $audit.Checks | Where-Object Status -eq 'FAIL'
 Written to the output directory, stamped with hostname + timestamp:
 
 - **`.html`** — the [Sentinel dashboard](docs/SENTINEL.md) (self-contained, shareable)
-- **`.json`** — the full structured report (`SchemaVersion 3.0`) for pipelines and diffing
+- **`.json`** — the full structured report (`SchemaVersion 3.1`) for pipelines and diffing. Carries
+  `Score`, `Posture`, `Verdict`, `Coverage`, `Incomplete`, `HardFails` and `NotEvaluated` alongside
+  every check, so the console, the dashboard and any consumer all read the same verdict
 - **`.txt`** — a plain human-readable report
 - **`_checks.csv`** and per-domain CSVs (physical disks, pools, virtual disks, volumes, BitLocker, antivirus)
 

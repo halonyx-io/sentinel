@@ -956,7 +956,7 @@ function Get-PostureAssessment {
         @{ Cat = 'TPM';                     Pat = '^TPM ready$';                     W = 2;  Cap = 100; Crit = $false; Req = $false; Name = 'TPM ready' }
 
         @{ Cat = 'Encryption';              Pat = '^OS volume';                      W = 20; Cap = 35;  Crit = $true;  Req = $true;  Name = 'OS drive encryption' }
-        @{ Cat = 'Encryption';              Pat = '^Data volume';                    W = 8;  Cap = 65;  Crit = $false; Req = $false; Name = 'Data drive encryption' }
+        @{ Cat = 'Encryption';              Pat = '^Data volume';                    W = 8;  Cap = 65;  Crit = $true;  Req = $false; Name = 'Data drive encryption' }
         @{ Cat = 'Encryption';              Pat = 'encryption strength';             W = 3;  Cap = 100; Crit = $false; Req = $false; Name = 'Encryption strength' }
         @{ Cat = 'Encryption';              Pat = 'key protector';                   W = 3;  Cap = 100; Crit = $false; Req = $false; Name = 'Key protector quality' }
 
@@ -3449,10 +3449,19 @@ if (Test-CommandExists 'Get-BitLockerVolume') {
             }
             catch {
 
+                # Name it as a real volume control so an unreadable volume is
+                # scored as a blind spot rather than silently ignored.
+                $FailRole =
+                    if (
+                        $Volume.MountPoint.TrimEnd('\') -ieq
+                        ([string]$env:SystemDrive).TrimEnd('\')
+                    ) { 'OS volume' }
+                    else { 'Data volume' }
+
                 Add-Check `
                     -Category 'Encryption' `
                     -Name (
-                        "Volume " +
+                        $FailRole + ' ' +
                         $Volume.MountPoint
                     ) `
                     -Status 'UNKNOWN' `
@@ -3919,23 +3928,68 @@ if (Test-CommandExists 'Get-BitLockerVolume') {
 
             if (-not $AlreadyReported) {
 
-                Add-Check `
-                    -Category 'Encryption' `
-                    -Name (
-                        "Volume " +
-                        $Volume.MountPoint
-                    ) `
-                    -Status 'UNKNOWN' `
-                    -Value (
-                        'Mounted fixed volume was not returned ' +
-                        'by the BitLocker provider'
-                    ) `
-                    -Details (
-                        "FileSystem=$($Volume.FileSystem); " +
-                        "DiskNumber=$($Volume.DiskNumber). " +
-                        'This may occur with an unusual pooled, ' +
-                        'spanned, dynamic or provider-managed layout.'
-                    )
+                # A mounted fixed volume the BitLocker provider never returned
+                # is an encryption BLIND SPOT, not a non-event. It is named as
+                # a real volume control so it is scored, and it runs the same
+                # detection ladder before giving up.
+                $MissRole =
+                    if (
+                        $Volume.MountPoint.TrimEnd('\') -ieq
+                        ([string]$env:SystemDrive).TrimEnd('\')
+                    ) { 'OS volume' }
+                    else { 'Data volume' }
+
+                $MissInfo =
+                    Get-EncryptableVolumeInfo `
+                        -DriveLetter $Volume.MountPoint
+
+                if ($MissInfo) {
+
+                    $MI = @($MissInfo)[0]
+
+                    if ($MI.ConversionText -eq 'FullyEncrypted' -and $MI.ProtectionText -eq 'On') {
+                        $MissStatus = 'PASS'
+                        $MissDetails = 'Encrypted and protected via the Windows volume-encryption provider.'
+                    }
+                    elseif ($MI.ConversionText -eq 'FullyEncrypted') {
+                        $MissStatus = 'FAIL'
+                        $MissDetails = 'Encrypted but protection is off, so the key is released without authentication.'
+                    }
+                    elseif ($MI.ConversionText -match 'InProgress|Paused') {
+                        $MissStatus = 'WARN'
+                        $MissDetails = 'Encryption is not complete.'
+                    }
+                    else {
+                        $MissStatus = 'FAIL'
+                        $MissDetails = 'Volume is NOT encrypted.'
+                    }
+
+                    Add-Check `
+                        -Category 'Encryption' `
+                        -Name "$MissRole $($Volume.MountPoint)" `
+                        -Status $MissStatus `
+                        -Value "$($MI.ConversionText); Protection=$($MI.ProtectionText); $($MI.EncryptionMethod)" `
+                        -Expected 'Fully encrypted; protection On' `
+                        -Details $MissDetails
+                }
+                else {
+
+                    Add-Check `
+                        -Category 'Encryption' `
+                        -Name "$MissRole $($Volume.MountPoint)" `
+                        -Status 'UNKNOWN' `
+                        -Value 'Not returned by any encryption provider' `
+                        -Expected 'Fully encrypted; protection On' `
+                        -Details (
+                            "FileSystem=$($Volume.FileSystem); " +
+                            "DiskNumber=$($Volume.DiskNumber). " +
+                            'Typical of a spanned/striped dynamic volume or an ' +
+                            'unusual pooled layout. BitLocker CANNOT encrypt ' +
+                            'dynamic volumes, so unless a third-party product ' +
+                            'covers it this data is almost certainly stored in ' +
+                            'the clear. Verify manually.'
+                        )
+                }
             }
         }
     }

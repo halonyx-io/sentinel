@@ -135,6 +135,11 @@ missing cmdlet, a skipped section, a provider that threw — is reported as **NO
 against coverage, and if it's critical it applies its cap exactly as a failure would. A machine
 Sentinel couldn't inspect can never score as a machine it inspected and liked.
 
+That applies per-volume too: **every mounted fixed volume is scored individually**. A drive no
+encryption provider will report — a spanned/striped *dynamic* volume, for instance, which BitLocker
+physically cannot encrypt — is an UNKNOWN that drags coverage down and blocks a green verdict,
+rather than quietly vanishing from the score.
+
 | Score | Band | Meaning |
 |-------|------|---------|
 | 90–100 | **HARDENED** | Strong. Remaining items are refinements. |

@@ -82,8 +82,30 @@
         - Admin elevation policy
         - Secure Desktop prompting
 
+    SCORING
+
+    The 0-100 integrity score is NOT an average of pass/fail counts. Each
+    genuine security control carries a weight, and critical controls carry a
+    cap: the highest score the machine may earn while that control is failing.
+    Informational checks (disk/volume health, inventory) carry no weight, so
+    healthy hardware can never inflate a security score.
+
+        outcome:  PASS 1.0   WARN 0.5   FAIL 0.0   UNKNOWN excluded
+        base   = 100 * sum(weight*outcome) / sum(weight of known controls)
+        score  = min(base, lowest Cap among failing critical controls)
+
+    An unencrypted OS drive alone caps the machine at 35; an unencrypted fixed
+    data drive caps it at 65. Caps stack by taking the minimum.
+
+    Any REQUIRED control that produces no result at all is reported as
+    NOT EVALUATED - counted against coverage and, if critical, capped exactly
+    as a failure. Absence of evidence is never treated as evidence of safety.
+    Runs that cannot read every critical control are marked INCOMPLETE and
+    clamped to 74, so a partially-inspected machine can never look hardened.
+
     OUTPUT
-        - Console report
+        - Console report (banner, colour-coded findings, score gauge)
+        - Self-contained HTML dashboard
         - JSON report
         - Human-readable TXT report
         - Checks CSV
@@ -105,6 +127,12 @@
 .PARAMETER NoExport
     Do not create report files.
 
+.PARAMETER NoHtml
+    Skip the HTML dashboard. JSON, TXT and CSV exports are still written.
+
+.PARAMETER OpenReport
+    Open the HTML dashboard in the default browser when the scan finishes.
+
 .PARAMETER Quiet
     Suppress normal console report.
 
@@ -115,18 +143,30 @@
     .\WindowsSecurityAudit.ps1
 
 .EXAMPLE
-    .\WindowsSecurityAudit.ps1 -PassThru
+    .\WindowsSecurityAudit.ps1 -OpenReport
 
 .EXAMPLE
     $audit = .\WindowsSecurityAudit.ps1 -NoExport -Quiet -PassThru
     $audit.Checks | Where-Object Status -eq 'FAIL'
 
+.EXAMPLE
+    # Everything the score held against this machine
+    $audit = .\WindowsSecurityAudit.ps1 -Quiet -PassThru
+    $audit.HardFails
+    $audit.NotEvaluated
+
 .NOTES
     Designed for Windows PowerShell 5.1 and PowerShell 7+ on Windows.
 
-    Administrator elevation is strongly recommended.
+    RUN AS ADMINISTRATOR. Without elevation, BitLocker and some Defender/TPM
+    detail cannot be read at all; the run is marked INCOMPLETE and the score
+    is clamped, because an unreadable machine must never score as a safe one.
 
-    No remediation actions are performed.
+    Read-only. No remediation actions are performed. Every file written goes
+    to the output directory you specify.
+
+    Reports describe a real machine's security posture - treat them as
+    sensitive.
 #>
 
 

@@ -166,6 +166,45 @@ Tune the weights and caps in the `$Map` table inside `Get-PostureAssessment`, an
 - Reports describe your machine's security state. Treat them as sensitive; `.gitignore` already
   keeps generated reports out of the repo.
 
+## Tests
+
+The scoring model has regression tests, because the failure mode that matters here is subtle: a
+control that quietly stops counting, so an unprotected machine reports as a safe one.
+
+```powershell
+.\tests\Test-Sentinel.ps1
+```
+
+They load the real functions straight out of the script (no copies, no drift) and assert that
+informational checks can never inflate a score, that critical failures cap the machine, that a
+control producing *no result* is a blind spot rather than a pass, and that partial runs can never
+reach a green band. Exits non-zero on failure, so it can gate CI.
+
+## Limitations — please read before trusting a score
+
+Sentinel is an opinionated **configuration posture snapshot**. Being honest about what it *can't*
+see matters more than the number it prints:
+
+- **It is not a malware scan, a penetration test, or a compliance audit.** A machine can score
+  HARDENED and still be compromised. Sentinel reads settings; it does not hunt for intruders.
+- **Run it elevated or don't trust the number.** Without admin, BitLocker and much Defender/TPM
+  detail simply cannot be read. Those runs are marked **INCOMPLETE** and clamped — by design.
+- **Third-party full-disk encryption cannot be verified.** Sentinel detects that VeraCrypt, ESET,
+  Sophos, Dell, McAfee etc. are *installed*, but cannot read their state. That reports as UNKNOWN —
+  deliberately under-crediting rather than over-crediting. Verify those manually.
+- **Dynamic / spanned volumes can't be encrypted by BitLocker at all**, and no provider will report
+  them. Sentinel flags them as blind spots; it cannot tell you whether the data is protected.
+- **The antivirus verdict decodes Windows Security Center's `productState`**, whose bit layout is
+  community-documented rather than officially specified. A non-standard vendor could be misread.
+- **Windows Server has no Security Center**, so the antivirus control lands UNKNOWN there.
+- **The weights and caps are a judgement call**, tuned for theft and malware resilience on
+  workstations and laptops. They are not a standard. A server, a kiosk or an air-gapped box
+  deserves a different table — it's one hashtable in `Get-PostureAssessment`, tune it.
+- **A score is a conversation starter, not a certificate.** Read the findings, not just the number.
+
+Found a case where it reports a machine as safer than it is? That's the bug class this project cares
+about most — please open an issue.
+
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT — see [LICENSE](LICENSE). Provided as-is, with no warranty: see the limitations above.

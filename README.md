@@ -32,6 +32,12 @@ is about the engine and the terminal.
 
 ## What it looks like
 
+[![The Sentinel dashboard: a machine scoring 35 out of 100, AT RISK, with two hard fails for unencrypted drives](docs/dashboard.png)](examples/sentinel-report.example.html)
+
+<sub>Every run drops a self-contained HTML file like this one — **[open the full example](examples/sentinel-report.example.html)**.</sub>
+
+And in the terminal:
+
 ```
   ==============================================================
   SYSTEM INTEGRITY  [###############---------------------------]  35/100  AT RISK

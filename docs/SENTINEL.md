@@ -7,10 +7,7 @@
 **▶ See it now:** open [`examples/sentinel-report.example.html`](../examples/sentinel-report.example.html)
 in a browser (sample data — a fictional host, safe to share).
 
-<!--
-  Drop a real screenshot at docs/dashboard.png and uncomment this to show it at the top:
-  ![Sentinel dashboard](dashboard.png)
--->
+![The Sentinel dashboard](dashboard.png)
 
 ## Why it exists
 

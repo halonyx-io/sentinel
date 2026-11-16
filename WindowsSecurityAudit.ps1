@@ -2,7 +2,7 @@
 
 <#
 .SYNOPSIS
-    Sentinel 1.0.1 - read-only Windows security posture audit.
+    Sentinel 1.0.2 - read-only Windows security posture audit.
 
 .DESCRIPTION
     Read-only Windows security and storage posture assessment.
@@ -197,7 +197,7 @@ param(
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 
-$script:SentinelVersion = '1.0.1'
+$script:SentinelVersion = '1.0.2'
 
 
 # ============================================================================

@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.0.2 (2026-11-16)
+
+### Fixed
+
+- **SSH audits no longer hang against newer Windows OpenSSH.** The remote audit used to stream the
+  whole ~180 KB script to the target over SSH stdin. Older Windows OpenSSH (e.g. on Windows 11 23H2)
+  accepts that; a newer build (tested on a Windows 11 Insider host) deadlocks on a large stdin
+  payload for a non-interactive command, so the audit never started and the call hung indefinitely.
+  The source is now gzip-compressed and staged in the target's temp folder in command-line-sized
+  pieces (no stdin), run from there, and deleted afterwards. Verified end to end against two
+  different Windows 11 machines over SSH, and WinRM is unchanged.
+
 ## 1.0.1 (2026-11-16)
 
 ### Fixed

@@ -111,8 +111,9 @@ $audit.Checks | Where-Object Status -eq 'FAIL'
 ## Audit another machine
 
 `Invoke-SentinelRemote.ps1` runs the audit on a remote Windows host and gives you the report
-locally. Nothing is copied to or left on the target. The script is streamed over the connection
-and run in memory.
+locally. Over WinRM the script runs entirely in memory. Over SSH it's staged compressed in the
+target's temp folder, run from there, and deleted when the audit finishes — nothing is installed
+and nothing persists.
 
 ```powershell
 # Domain-joined target, Kerberos over WinRM
@@ -132,7 +133,9 @@ A few things to know:
   plain-HTTP NTLM or skip certificate checks. On a workgroup machine that means setting up an
   HTTPS listener first.
 - **SSH** uses your system OpenSSH client, your existing `known_hosts` entry and key-based auth.
-  It never prompts and never accepts an unknown host key.
+  It never prompts and never accepts an unknown host key. It works against older and newer Windows
+  OpenSSH builds alike — the source is sent in command-line-sized pieces rather than over stdin,
+  which newer builds can deadlock on.
 - The audit runs in Windows PowerShell 5.1 on the target. Connect with an admin account or the
   run will be INCOMPLETE.
 

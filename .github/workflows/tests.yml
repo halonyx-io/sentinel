@@ -37,6 +37,7 @@ jobs:
         run: |
           ./tests/Test-Sentinel.ps1
           ./tests/Test-Compare.ps1
+          ./tests/Test-HtmlReport.ps1
           ./tests/Test-Collectors.ps1
 
       - name: Audit checks (Windows PowerShell 5.1)
@@ -44,4 +45,5 @@ jobs:
         run: |
           ./tests/Test-Sentinel.ps1
           ./tests/Test-Compare.ps1
+          ./tests/Test-HtmlReport.ps1
           ./tests/Test-Collectors.ps1

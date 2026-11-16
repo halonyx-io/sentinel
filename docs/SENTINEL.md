@@ -1,63 +1,60 @@
 # SENTINEL — the HTML readout
 
-> The dashboard Sentinel writes at the end of every scan. One self-contained `.html` file: a
-> CRT-terminal security console with an integrity gauge, live filtering and drill-down findings.
-> No server, no build step, no internet — it runs from a double-click.
+> The dashboard Sentinel writes at the end of every scan. One self-contained `.html` file with a
+> score gauge, filtering and expandable findings. No server, no build step, no internet. Just
+> double-click it.
 
-**▶ See it now:** open [`examples/sentinel-report.example.html`](../examples/sentinel-report.example.html)
-in a browser (sample data — a fictional host, safe to share).
+Open [`examples/sentinel-report.example.html`](../examples/sentinel-report.example.html) in a
+browser to see one. It's sample data for a made-up host.
 
 ![The Sentinel dashboard](dashboard.png)
 
 ## Why it exists
 
-The console report is great in a terminal. It's useless in an email, a ticket, or a "can you check
-my mum's laptop" text. The HTML readout is the shareable artifact: hand someone one file and they
-see the whole posture at a glance — score first, then the detail, colour-coded so what needs
-attention reads instantly.
+The console report is fine in a terminal and useless in an email, a ticket or a "can you check my
+mum's laptop" message. The HTML file is the one you send. Score first, then the detail,
+colour-coded so the problems stand out.
 
 ## What's in it
 
-- **Integrity gauge** — the same 0–100 score as the console, as a sweeping neon ring coloured by
-  severity, with the band (`HARDENED` → `CRITICAL`) and a one-line verdict.
-- **INCOMPLETE badge + coverage** — when Sentinel couldn't read every critical control (typically an
-  un-elevated run), the gauge says so and the green bands are withheld.
-- **Hard fails callout** — every failing critical control and the score ceiling it imposes, so it's
-  obvious *why* the number is what it is.
-- **Not-evaluated callout** — controls that produced no result at all, stated plainly as blind spots
-  treated as unsafe rather than quietly omitted.
-- **Status tiles** — PASS / WARN / FAIL / UNKNOWN / INFO counts. Click one to filter the whole page
-  to just those results.
-- **Distribution bar** — the mix of results at a glance.
-- **Category panels** — every check, grouped, with a severity stripe and status pill. Click any
-  `FAIL` / `WARN` (anything with detail) to expand the finding — including what was *expected*.
-- **Filter bar** — ALL / FAIL / WARN / PASS / INFO / UNKNOWN.
+- **Score gauge**: the same 0–100 score as the console, with the band (`HARDENED` to `CRITICAL`)
+  and a one-line verdict.
+- **INCOMPLETE badge and coverage**: shown when Sentinel couldn't read everything it needs,
+  usually because it wasn't run as admin.
+- **Hard fails**: each failing critical control and the score cap it applies, so you can see why
+  the number is what it is.
+- **Not evaluated**: controls that returned nothing, listed as blind spots instead of left out.
+- **Status tiles**: PASS / WARN / FAIL / UNKNOWN / INFO counts. Click one to filter the page.
+- **Category panels**: every check, grouped. Click anything with detail to see what was found and
+  what was expected.
 
-The dashboard supports keyboard navigation and respects `prefers-reduced-motion`. It uses
-installed fonts with system fallbacks and works offline.
+It works with the keyboard, respects `prefers-reduced-motion`, and loads nothing from the
+internet.
 
 ## How the data gets in
 
-There's no magic and no external data file. At export time the script serialises its report object
-and injects it straight into the page:
+No external data file. At export time the script turns its report into JSON and drops it into
+the page:
 
 ```powershell
-$Json     = $Report | ConvertTo-Json -Depth 12    # the whole audit
-$Template = @' …the HTML/CSS/JS… '@                # embedded in the script
-$html     = $Template.Replace('@@REPORT_JSON@@', $Json)
+$Json = $Report | ConvertTo-Json -Depth 12
+$Json = $Json.Replace('<', '\u003c').Replace('>', '\u003e').Replace('&', '\u0026')
+$html = $Template.Replace('@@REPORT_JSON@@', $Json)
 ```
 
-The page's JavaScript reads that one `REPORT` object and renders itself. The **score, band, coverage,
-verdict and hard-fails are computed once in PowerShell** (`Get-PostureAssessment`) and read straight
-off `REPORT` — the page does no scoring maths of its own, so the gauge, the INCOMPLETE badge and the
-hard-fails callout can never disagree with the console. See
-[`examples/sentinel-report.template.html`](../examples/sentinel-report.template.html) for the exact
-template (the `@@REPORT_JSON@@` placeholder is where your data lands).
+The escaping matters. Collected values (machine names, product names, error messages) end up
+inside a `<script>` element, and a value containing `</script>` or `<!--` could otherwise break out
+of it. `tests/Test-HtmlReport.ps1` checks this with hostile strings. All dynamic text is
+HTML-escaped again when the page renders it.
+
+The score, band, coverage, verdict and hard fails are worked out once in PowerShell
+(`Get-PostureAssessment`). The page just displays them and does no scoring of its own, so it can't
+disagree with the console. [`examples/sentinel-report.template.html`](../examples/sentinel-report.template.html)
+is the exact template, and `@@REPORT_JSON@@` is where the data goes.
 
 ## Design notes
 
-Committed single-theme by choice — this is a neon terminal, not a document, so it stays dark on any
-host:
+Dark only, on purpose. It's meant to look like a terminal, not a document.
 
 | Token | Value | Role |
 |-------|-------|------|
@@ -67,25 +64,23 @@ host:
 | magenta | `#ff2e88` | secondary accent (the synthwave pairing) |
 | pass / warn / fail | `#2fe38f` / `#ffc24d` / `#ff4368` | semantic channel, kept separate from the accent |
 
-Type is **Chakra Petch** (squared, technical — the equipment-label face) for headings and labels,
-**JetBrains Mono** for the data rows. Scanlines, vignette and the gauge sweep are the only motion,
-and all of it is disabled under reduced-motion.
+Headings use **Chakra Petch** and data uses **JetBrains Mono** *if you have them installed*.
+Nothing is downloaded, so otherwise it falls back to your system sans-serif and monospace fonts.
+The scanlines and the gauge sweep are the only motion, and both turn off under reduced-motion.
 
 ## Customising it
 
-Everything lives in the `New-HtmlReport` here-string inside `WindowsSecurityAudit.ps1`:
+Everything is in the `New-HtmlReport` here-string inside `WindowsSecurityAudit.ps1`:
 
-- **Palette** — edit the CSS custom properties in `:root`.
-- **Score weights / caps** — the `$Map` table in `Get-PostureAssessment`; **bands** live in
-  `Get-PostureBand`. Both are PowerShell — the page just renders what they produce, so there's only
-  one place to tune.
-- **Extra panels** — the `REPORT` object also carries `Storage` (physical disks, pools, virtual
-  disks, volumes, BitLocker) and `AntivirusProducts`; they're exported but not yet drawn. Wiring a
-  storage-map panel is a good first extension.
+- **Palette**: the CSS custom properties in `:root`.
+- **Weights and caps**: the `$Map` table in `Get-PostureAssessment`. Bands are in `Get-PostureBand`.
+  The page only renders what those produce, so there's one place to tune.
+- **More panels**: `REPORT` also carries `Storage` (disks, pools, virtual disks, volumes,
+  BitLocker) and `AntivirusProducts`. They're exported but not drawn yet.
+- Any new field you render should go through `esc()`.
 
 ## Privacy
 
-A generated report is a description of a real machine's security state — Secure Boot status, disk
-serials, whether BitLocker is on. Treat it like any other host inventory. The repo's `.gitignore`
-keeps real `WindowsSecurityAudit_*.html` files out of source control; only the sanitised sample in
-`examples/` is meant to be shared.
+A report describes a real machine's security: Secure Boot state, disk serials, whether BitLocker
+is on. Treat it like any other host inventory. `.gitignore` keeps real reports out of the repo.
+Only the sample in `examples/` is meant to be shared.

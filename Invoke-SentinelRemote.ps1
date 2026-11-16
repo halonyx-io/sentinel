@@ -37,7 +37,9 @@ $source = [IO.File]::ReadAllText($auditPath)
 $collect = {
     param([string]$AuditSource)
     $ErrorActionPreference = 'Stop'
-    $ProgressPreference = 'SilentlyContinue'
+    # Module cmdlets (Storage, Defender, NetSecurity) read the global value;
+    # over SSH their progress records would otherwise reach stderr as CLIXML.
+    $global:ProgressPreference = 'SilentlyContinue'
     $audit = [scriptblock]::Create($AuditSource)
     $report = & $audit -NoExport -Quiet -PassThru
     if ($null -eq $report -or $null -eq $report.PSObject.Properties['Checks']) {
@@ -55,7 +57,9 @@ if ($PSCmdlet.ParameterSetName -eq 'SSH') {
         try {
             [Console]::OutputEncoding = [Text.Encoding]::UTF8
             $source = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String([Console]::In.ReadToEnd()))
-            & { SENTINEL_COLLECT } $source
+            # Tag the report so login banners or profile output on stdout
+            # cannot be mistaken for it.
+            'SENTINEL-REPORT:' + (& { SENTINEL_COLLECT } $source)
         }
         catch {
             [Console]::Error.WriteLine($_.Exception.Message)
@@ -64,10 +68,22 @@ if ($PSCmdlet.ParameterSetName -eq 'SSH') {
     }.ToString().Replace('SENTINEL_COLLECT', $collect.ToString())
     $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($bootstrap))
     $payload = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($source))
-    $json = $payload | & $ssh.Source -T -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=10 -o ServerAliveInterval=15 -o ServerAliveCountMax=3 -- $SshHost powershell.exe -NoProfile -NonInteractive -EncodedCommand $encoded
-    if ($LASTEXITCODE -ne 0) {
-        throw "SSH audit of '$SshHost' failed (exit $LASTEXITCODE). Check the SSH account, known host entry and endpoint access."
+    # The remote writes UTF-8; decode it as such on Windows clients too.
+    $consoleEncoding = [Console]::OutputEncoding
+    try {
+        # Hosts without a console (ISE) refuse the change; keep their default.
+        try { [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false) } catch { }
+        $lines = @($payload | & $ssh.Source -T -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=10 -o ServerAliveInterval=15 -o ServerAliveCountMax=3 -- $SshHost powershell.exe -NoProfile -NonInteractive -EncodedCommand $encoded)
+        $sshExit = $LASTEXITCODE
     }
+    finally {
+        try { [Console]::OutputEncoding = $consoleEncoding } catch { }
+    }
+    if ($sshExit -ne 0) {
+        throw "SSH audit of '$SshHost' failed (exit $sshExit). Check the SSH account, known host entry and endpoint access."
+    }
+    $json = @($lines | Where-Object { "$_".StartsWith('SENTINEL-REPORT:') } |
+        ForEach-Object { "$_".Substring('SENTINEL-REPORT:'.Length) })
 }
 else {
     $address = $null
@@ -95,7 +111,7 @@ else {
 if (@($json).Count -ne 1 -or -not $json) {
     throw 'Expected one JSON report from the remote host.'
 }
-$report = ConvertFrom-Json -InputObject $json
+$report = ConvertFrom-Json -InputObject ([string]@($json)[0])
 if ($null -eq $report -or $null -eq $report.PSObject.Properties['Checks']) {
     throw 'The remote host returned JSON without an audit report.'
 }

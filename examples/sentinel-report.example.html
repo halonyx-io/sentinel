@@ -310,7 +310,7 @@ const REPORT = {
     "Warn": 2,
     "Fail": 2,
     "Unknown": 0,
-    "Info": 9
+    "Info": 10
   },
   "Checks": [
     {
@@ -459,9 +459,17 @@ const REPORT = {
     },
     {
       "Category": "Credential Protection",
-      "Check": "LSA protected process configuration",
+      "Check": "LSA protection (running state)",
       "Status": "PASS",
-      "Value": "Enabled",
+      "Value": "LSASS running as a protected process",
+      "Expected": "LSASS running as a protected process (PPL)",
+      "Details": "Source: LSASS process protection level. Protection 0x41 (type 1, signer 4)."
+    },
+    {
+      "Category": "Credential Protection",
+      "Check": "LSA protected process configuration",
+      "Status": "INFO",
+      "Value": "No explicit registry configuration",
       "Expected": "",
       "Details": ""
     },
@@ -618,7 +626,8 @@ const REPORT = {
     "BitLockerVolumes": []
   },
   "AntivirusProducts": [],
-  "ScoringVersion": 2
+  "ScoringVersion": 2,
+  "SentinelVersion": "1.0.1"
 };
 
 /* ---------- ordering + helpers ---------- */
@@ -626,7 +635,7 @@ const CAT_ORDER=["System","Boot Security","TPM","Encryption","Storage Health",
   "Virtualisation Security","Credential Protection","Antivirus","Defender","Firewall",
   "SMB Security","Remote Access","Privilege Protection","Collection"];
 const SEV=["FAIL","WARN","UNKNOWN","INFO","PASS"];
-const esc=s=>String(s==null?"":s).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
+const esc=s=>String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 
 const checks=REPORT.Checks;
 const counts={PASS:0,WARN:0,FAIL:0,UNKNOWN:0,INFO:0};
@@ -731,9 +740,10 @@ order.forEach((cat,i)=>{
               cc.PASS?`<span class="m-pass">${cc.PASS} PASS</span>`:""].join("");
   const rowsHtml=rows.map(r=>{
     const d=r.Details?`<div class="detail"><p>${r.Expected?`<span class="kv">Expected: <b>${esc(r.Expected)}</b></span><br>`:""}${esc(r.Details)}</p></div>`:"";
-    return `<div class="row ${r.Details?"has-detail":""}" data-status="${r.Status}">
-        <div class="stripe stripe-${r.Status}"></div>
-        <div class="st s-${r.Status} bg-${r.Status}">${r.Status}</div>
+    const st=SEV.includes(r.Status)?r.Status:"UNKNOWN";
+    return `<div class="row ${r.Details?"has-detail":""}" data-status="${st}">
+        <div class="stripe stripe-${st}"></div>
+        <div class="st s-${st} bg-${st}">${st}</div>
         <div class="name">${esc(r.Check)}</div>
         <div class="val">${esc(r.Value)}${r.Details?'<span class="exp">▸</span>':""}</div>
         ${d}</div>`;
@@ -777,4 +787,3 @@ document.getElementById("tiles").addEventListener("keydown",e=>{
   if(e.key==="Enter"||e.key===" "){e.preventDefault();const t=e.target.closest(".tile");if(t)applyFilter(filter===t.dataset.f?"ALL":t.dataset.f);}
 });
 </script>
-

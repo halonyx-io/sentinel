@@ -2,10 +2,11 @@
 
 <#
 .SYNOPSIS
-    Windows Security Posture Audit v3
+    Sentinel 1.0.1 - read-only Windows security posture audit.
 
 .DESCRIPTION
     Read-only Windows security and storage posture assessment.
+    https://github.com/halonyx-io/sentinel
 
     The script intentionally separates:
 
@@ -57,7 +58,8 @@
         - Credential Guard
         - Secure Launch
         - Kernel-mode hardware-enforced stack protection
-        - LSA protection
+        - LSA protection (the running LSASS protection level, falling
+          back to WinInit event 12 and then the RunAsPPL setting)
 
       ANTIVIRUS
         - Registered Windows Security antivirus products
@@ -82,6 +84,11 @@
         - Admin elevation policy
         - Secure Desktop prompting
 
+      DIAGNOSTICS (not scored)
+        - Uptime and last boot
+        - System drive free space
+        - Most recent installed update
+
     SCORING
 
     The 0-100 integrity score is NOT an average of pass/fail counts. Each
@@ -92,7 +99,8 @@
 
         outcome:  PASS 1.0   WARN 0.5   FAIL 0.0   UNKNOWN excluded
         base   = 100 * sum(weight*outcome) / sum(weight of known controls)
-        score  = min(base, lowest Cap among failing critical controls)
+        score  = min(base, caps of failing or unknown critical controls,
+                     74 if incomplete)
 
     An unencrypted OS drive alone caps the machine at 35; an unencrypted fixed
     data drive caps it at 65. Caps stack by taking the minimum.
@@ -188,6 +196,8 @@ param(
 
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
+
+$script:SentinelVersion = '1.0.1'
 
 
 # ============================================================================
@@ -473,6 +483,89 @@ function Get-StatusColour {
             return 'White'
         }
     }
+}
+
+
+function Get-LsaProtectionState {
+
+    # Returns Protected = $true / $false when the running state is
+    # established, or $null when it cannot be read.
+    $Result = [PSCustomObject]@{ Protected = $null; Source = $null; Detail = $null }
+    $Reasons = [System.Collections.Generic.List[string]]::new()
+
+    try {
+        if (-not ('SecurityAuditLsaNative' -as [type])) {
+            Add-Type @'
+using System;
+using System.Runtime.InteropServices;
+
+public static class SecurityAuditLsaNative
+{
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern IntPtr OpenProcess(uint access, bool inherit, int pid);
+
+    [DllImport("kernel32.dll")]
+    public static extern bool CloseHandle(IntPtr handle);
+
+    [DllImport("ntdll.dll")]
+    public static extern int NtQueryInformationProcess(
+        IntPtr handle, int infoClass, out byte info, int length, out int returned);
+
+    // Returns the PS_PROTECTION byte, or -1 with the Win32/NTSTATUS code.
+    public static int GetProtection(int pid, out int error)
+    {
+        error = 0;
+        IntPtr h = OpenProcess(0x1000, false, pid);  // QUERY_LIMITED_INFORMATION
+        if (h == IntPtr.Zero) { error = Marshal.GetLastWin32Error(); return -1; }
+        try
+        {
+            byte level; int returned;
+            int status = NtQueryInformationProcess(h, 61, out level, 1, out returned);
+            if (status != 0) { error = status; return -1; }
+            return level;
+        }
+        finally { CloseHandle(h); }
+    }
+}
+'@
+        }
+
+        $Lsass = @(Get-Process -Name lsass -ErrorAction Stop)
+        if ($Lsass.Count -ne 1) { throw "found $($Lsass.Count) lsass processes" }
+        $Err = 0
+        $Level = [SecurityAuditLsaNative]::GetProtection($Lsass[0].Id, [ref]$Err)
+        if ($Level -lt 0) { throw ('protection query failed with code 0x{0:X}' -f $Err) }
+
+        # PS_PROTECTION: type in bits 0-2 (1 = PPL, 2 = PP), signer in bits 4-7.
+        $Type = $Level -band 7
+        $Signer = $Level -shr 4
+        $Result.Protected = $Type -ne 0
+        $Result.Source = 'LSASS process protection level'
+        $Result.Detail = 'Protection 0x{0:X2} (type {1}, signer {2}).' -f $Level, $Type, $Signer
+        return $Result
+    }
+    catch {
+        $Reasons.Add("process query: $($_.Exception.Message)")
+    }
+
+    try {
+        $Boot = (Get-CimInstance -ClassName Win32_OperatingSystem -ErrorAction Stop).LastBootUpTime
+        $Started = Get-WinEvent -MaxEvents 1 -ErrorAction Stop -FilterHashtable @{
+            LogName = 'System'; ProviderName = 'Microsoft-Windows-Wininit'; Id = 12; StartTime = $Boot
+        }
+        $Result.Protected = $true
+        $Result.Source = 'WinInit event 12 since last boot'
+        $Result.Detail = [string]$Started.Message
+        return $Result
+    }
+    catch {
+        # No event is not proof of an unprotected LSASS (the log may have
+        # rolled over), so the state stays unknown.
+        $Reasons.Add("event log: $($_.Exception.Message)")
+    }
+
+    $Result.Detail = $Reasons -join '; '
+    return $Result
 }
 
 
@@ -1172,7 +1265,7 @@ function Write-SentinelBanner {
     foreach ($Line in $Art) {
         Write-Host $Line -ForegroundColor Cyan
     }
-    Write-Host '     W I N D O W S   S E C U R I T Y   P O S T U R E   / /   v3' -ForegroundColor DarkCyan
+    Write-Host "     W I N D O W S   S E C U R I T Y   P O S T U R E   / /   v$script:SentinelVersion" -ForegroundColor DarkCyan
     Write-Host ''
 
     $AdminText = if ($Admin) { 'ELEVATED' } else { 'STANDARD  (results may be partial)' }
@@ -1273,7 +1366,11 @@ function New-HtmlReport {
     )
 
     $Json = ($Report | ConvertTo-Json -Depth 12)
-    $Json = $Json.Replace('</', '<\/')
+    # JSON escaping alone is not safe inside <script>: '</script' ends the
+    # element and '<!--' changes how the tokenizer reads it. These characters
+    # can only occur inside JSON strings, so their \u escapes are equivalent.
+    $Json = $Json.Replace('<', '\u003c').Replace('>', '\u003e').Replace('&', '\u0026')
+    $Json = $Json.Replace([string][char]0x2028, '\u2028').Replace([string][char]0x2029, '\u2029')
 
     $Template = @'
 <title>Sentinel Security Readout</title>
@@ -1564,7 +1661,7 @@ const CAT_ORDER=["System","Boot Security","TPM","Encryption","Storage Health",
   "Virtualisation Security","Credential Protection","Antivirus","Defender","Firewall",
   "SMB Security","Remote Access","Privilege Protection","Collection"];
 const SEV=["FAIL","WARN","UNKNOWN","INFO","PASS"];
-const esc=s=>String(s==null?"":s).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
+const esc=s=>String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 
 const checks=REPORT.Checks;
 const counts={PASS:0,WARN:0,FAIL:0,UNKNOWN:0,INFO:0};
@@ -1669,9 +1766,10 @@ order.forEach((cat,i)=>{
               cc.PASS?`<span class="m-pass">${cc.PASS} PASS</span>`:""].join("");
   const rowsHtml=rows.map(r=>{
     const d=r.Details?`<div class="detail"><p>${r.Expected?`<span class="kv">Expected: <b>${esc(r.Expected)}</b></span><br>`:""}${esc(r.Details)}</p></div>`:"";
-    return `<div class="row ${r.Details?"has-detail":""}" data-status="${r.Status}">
-        <div class="stripe stripe-${r.Status}"></div>
-        <div class="st s-${r.Status} bg-${r.Status}">${r.Status}</div>
+    const st=SEV.includes(r.Status)?r.Status:"UNKNOWN";
+    return `<div class="row ${r.Details?"has-detail":""}" data-status="${st}">
+        <div class="stripe stripe-${st}"></div>
+        <div class="st s-${st} bg-${st}">${st}</div>
         <div class="name">${esc(r.Check)}</div>
         <div class="val">${esc(r.Value)}${r.Details?'<span class="exp">▸</span>':""}</div>
         ${d}</div>`;
@@ -4367,49 +4465,66 @@ $RunAsPPL =
         -Name 'RunAsPPL'
 
 
-if ($null -eq $RunAsPPL) {
+# The registry only records configuration. Windows 11 22H2+ can enable LSA
+# protection with no RunAsPPL value at all, so read the state LSASS is
+# actually running with: its process protection level first, then the
+# WinInit event 12 written when LSASS starts protected in this boot.
+$LsaEffective = Get-LsaProtectionState
 
+
+$LsaConfigStatus = 'UNKNOWN'
+if ($null -eq $RunAsPPL) {
+    $LsaConfig = 'No explicit registry configuration'
+}
+elseif ("$RunAsPPL" -eq '1') {
+    $LsaConfig = 'Enabled with UEFI lock'; $LsaConfigStatus = 'PASS'
+}
+elseif ("$RunAsPPL" -eq '2') {
+    $LsaConfig = 'Enabled without UEFI lock'; $LsaConfigStatus = 'PASS'
+}
+elseif ("$RunAsPPL" -eq '0') {
+    $LsaConfig = 'Explicitly disabled'; $LsaConfigStatus = 'WARN'
+}
+else {
+    $LsaConfig = "$RunAsPPL"
+}
+
+
+if ($null -ne $LsaEffective.Protected) {
+
+    Add-Check `
+        -Category 'Credential Protection' `
+        -Name 'LSA protection (running state)' `
+        -Status $(if ($LsaEffective.Protected) { 'PASS' } else { 'WARN' }) `
+        -Value $(
+            if ($LsaEffective.Protected) { 'LSASS running as a protected process' }
+            else { 'LSASS not running as a protected process' }
+        ) `
+        -Expected 'LSASS running as a protected process (PPL)' `
+        -Details ("Source: $($LsaEffective.Source). $($LsaEffective.Detail)")
+
+    # Configuration is evidence only once the effective state is known.
     Add-Check `
         -Category 'Credential Protection' `
         -Name 'LSA protected process configuration' `
         -Status 'INFO' `
-        -Value 'No explicit registry configuration' `
-        -Details (
-            'Modern Windows 11 may enable LSA protection ' +
-            'without this registry value being explicitly present.'
-        )
-}
-elseif ([int]$RunAsPPL -eq 1) {
-
-    Add-Check `
-        -Category 'Credential Protection' `
-        -Name 'LSA protected process configuration' `
-        -Status 'PASS' `
-        -Value 'Enabled with UEFI lock'
-}
-elseif ([int]$RunAsPPL -eq 2) {
-
-    Add-Check `
-        -Category 'Credential Protection' `
-        -Name 'LSA protected process configuration' `
-        -Status 'PASS' `
-        -Value 'Enabled without UEFI lock'
-}
-elseif ([int]$RunAsPPL -eq 0) {
-
-    Add-Check `
-        -Category 'Credential Protection' `
-        -Name 'LSA protected process configuration' `
-        -Status 'WARN' `
-        -Value 'Explicitly disabled'
+        -Value $LsaConfig
 }
 else {
 
+    # Without the running state, fall back to configuration. An absent
+    # value stays UNKNOWN: it neither proves nor disproves protection.
     Add-Check `
         -Category 'Credential Protection' `
         -Name 'LSA protected process configuration' `
-        -Status 'UNKNOWN' `
-        -Value $RunAsPPL
+        -Status $LsaConfigStatus `
+        -Value $LsaConfig `
+        -Details (
+            'The running LSASS protection level could not be read ' +
+            "($($LsaEffective.Detail)). " +
+            'Modern Windows 11 may enable LSA protection ' +
+            'without this registry value being explicitly present.'
+        )
 }
 
 
@@ -5314,6 +5429,7 @@ $Report = [PSCustomObject]@{
     # Incomplete, HardFails and NotEvaluated.
     SchemaVersion = '3.1'
     ScoringVersion = 2
+    SentinelVersion = $script:SentinelVersion
 
     GeneratedAt =
         (Get-Date).ToString('o')

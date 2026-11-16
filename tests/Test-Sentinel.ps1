@@ -278,6 +278,25 @@ $NoncriticalResult = Get-PostureAssessment -Checks $Noncritical
 Assert-That 'noncritical failures reduce the score without appearing as hard failures' `
     ($NoncriticalResult.Score -lt 100 -and $NoncriticalResult.HardFails.Count -eq 0)
 
+# ---- LSA: the running state is what counts, configuration is evidence ----
+$LsaRunning = @(Get-HealthyChecks | Where-Object { $_.Check -notmatch '^LSA' }) + @(
+    (New-Check 'Credential Protection' 'LSA protection (running state)' 'PASS')
+    (New-Check 'Credential Protection' 'LSA protected process configuration' 'INFO')
+)
+$LsaRunningResult = Get-PostureAssessment -Checks $LsaRunning -IsAdmin $true
+Assert-That 'running LSA protection without a RunAsPPL value is fully evaluated' `
+    ($LsaRunningResult.Score -eq 100 -and -not $LsaRunningResult.Incomplete -and
+        @($LsaRunningResult.NotEvaluated).Count -eq 0) `
+    "got $($LsaRunningResult.Score) incomplete=$($LsaRunningResult.Incomplete)"
+
+$LsaUnread = @(Get-HealthyChecks | Where-Object { $_.Check -notmatch '^LSA' }) +
+    (New-Check 'Credential Protection' 'LSA protected process configuration' 'UNKNOWN')
+$LsaUnreadResult = Get-PostureAssessment -Checks $LsaUnread -IsAdmin $true
+Assert-That 'unreadable LSA state with no configuration stays UNKNOWN, never a pass' `
+    ($LsaUnreadResult.Incomplete -and $LsaUnreadResult.Score -le 74) `
+    "got $($LsaUnreadResult.Score) incomplete=$($LsaUnreadResult.Incomplete)"
+
+
 # ---- 10. every scoring entry is well-formed ----
 $Source = ($Ast.FindAll(
     {

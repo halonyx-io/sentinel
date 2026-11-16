@@ -10,7 +10,7 @@
 
 ### Windows Security Posture Audit
 
-**A read-only Windows hardening auditor that scores your box and hands you a cyberpunk report.**
+**A read-only Windows hardening audit. One score, one report, nothing changed.**
 
 [![tests](https://github.com/halonyx-io/sentinel/actions/workflows/tests.yml/badge.svg)](https://github.com/halonyx-io/sentinel/actions/workflows/tests.yml)
 ![PowerShell](https://img.shields.io/badge/PowerShell-5.1%20%7C%207%2B-5391FE?logo=powershell&logoColor=white)
@@ -22,20 +22,20 @@
 
 ---
 
-Sentinel walks your machine, checks the settings that actually decide whether it survives a bad
-day — Secure Boot, TPM, BitLocker, VBS/HVCI, Credential Guard, Defender, the firewall, SMB, RDP,
-UAC — and turns the result into a single **integrity score** and a stack of reports. It changes
-**nothing**. No registry writes, no toggles, no "fixes". It looks, it grades, it leaves.
+Sentinel checks the settings that decide how a Windows machine holds up if it's stolen or gets
+malware: Secure Boot, TPM, BitLocker, VBS/HVCI, Credential Guard, LSA protection, Defender, the
+firewall, SMB, RDP and UAC. It turns the results into a 0–100 score and a set of reports.
 
-Every run drops a self-contained **[Sentinel HTML dashboard](docs/SENTINEL.md)** next to the CSVs —
-one file, no dependencies, opens in any browser, online or off. That's the pretty one. This README
-is about the engine and the terminal.
+It doesn't change anything. No registry writes, no toggles, no fixes. It reads and reports.
+
+It runs locally, or against another Windows box over WinRM or SSH, and it can diff two runs so
+you can see what actually changed.
 
 ## What it looks like
 
 [![The Sentinel dashboard: a machine scoring 35 out of 100, AT RISK, with two hard fails for unencrypted drives](docs/dashboard.png)](examples/sentinel-report.example.html)
 
-<sub>Every run drops a self-contained HTML file like this one — **[open the full example](examples/sentinel-report.example.html)**.</sub>
+<sub>Each run writes a single self-contained HTML file like this. **[Open the example](examples/sentinel-report.example.html)** · [more on the dashboard](docs/SENTINEL.md)</sub>
 
 And in the terminal:
 
@@ -48,98 +48,93 @@ And in the terminal:
     x Encryption / OS volume C:  -> score capped at 35
     x Encryption / Data volume D:  -> score capped at 65
 
-  PASS 24    WARN 2    FAIL 2    UNKNOWN 0    INFO 6
+  PASS 24    WARN 2    FAIL 2    UNKNOWN 0    INFO 10
   ==============================================================
 ```
 
-That machine passes 24 checks. It still scores 35, because its drives are in the clear — which is
-exactly the point.
-
-Findings are grouped by category and colour-coded on the console — green `PASS`, amber `WARN`,
-red `FAIL`, violet `UNKNOWN`, grey `INFO` — with the *why* printed underneath anything that isn't
-a pass. Full per-check detail lands in the exported files.
+24 passes, and it still scores 35 because the drives aren't encrypted. That's deliberate: a pile
+of green ticks shouldn't hide the one thing that matters.
 
 ## Quick start
 
+Clone or download the repo, then from an elevated PowerShell prompt:
+
 ```powershell
-# clone, then from the repo folder — right-click > Run as administrator for full results
 .\WindowsSecurityAudit.ps1
 ```
 
-If PowerShell blocks the script, unblock this one run without changing your machine policy:
+If the execution policy blocks it, bypass it for this one run:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\WindowsSecurityAudit.ps1
 ```
 
-> **Run elevated.** Sentinel works without admin rights (and still detects TPM presence/version),
-> but BitLocker and some Defender/TPM detail return `UNKNOWN` unless it's running as Administrator —
-> which marks the score **INCOMPLETE**. Run as Administrator for a full, trustworthy score.
+> **Run it as Administrator.** It works without admin, but BitLocker and some Defender/TPM detail
+> can't be read, so those checks come back `UNKNOWN`, the run is marked **INCOMPLETE** and the
+> score is held at 74 or below.
 
 ## What it checks
 
 | Area | Checks |
 |------|--------|
-| **System** | Edition / build / display version, model, CPU, RAM, BIOS/UEFI, pending reboot |
-| **Boot & platform** | Firmware mode (UEFI/BIOS), Secure Boot, and the full TPM state matrix — absent / v1.2 / v2.0 / disabled / not-ready / ready / locked-out (presence & version detected even without admin) |
-| **Storage** | Physical disk health, Storage Spaces pools & virtual disks, resiliency, volume health, disk→volume mapping |
-| **Encryption** | OS + data volume encryption state, protection status, %, **encryption strength (XTS-AES-256 vs weaker)**, **key-protector quality (TPM+PIN > TPM-only > password/recovery)**, recovery protector, auto-unlock. Detection falls back through BitLocker cmdlets → the Device Encryption WMI provider (**works on Windows Home**) → third-party FDE detection (VeraCrypt, ESET, Sophos, Dell, McAfee, …) |
-| **Antivirus** | A provider-agnostic *"is some real-time AV active and up to date?"* control decoded from Windows Security Center — so a passive Defender behind a healthy third-party AV passes, and an expired one fails |
-| **Virtualisation security** | VBS, Memory Integrity / HVCI, Credential Guard, Secure Launch, kernel-mode HW stack protection |
-| **Windows security** | LSA protection (RunAsPPL), Code Integrity policy |
-| **Defender detail** | Defender running mode, real-time & behaviour monitoring, downloaded-file scanning, signature age, Tamper Protection |
-| **Network** | Firewall profiles, SMBv1, SMBv2/3, SMB signing, insecure guest logons, RDP + NLA |
-| **Privilege** | UAC, admin elevation policy, Secure Desktop prompting |
+| **System** | Edition, build, model, CPU, RAM, BIOS/UEFI, pending reboot |
+| **Boot & TPM** | Firmware mode, Secure Boot, TPM present / version / ready / locked out (presence and version work without admin) |
+| **Storage** | Physical disk health, Storage Spaces pools and virtual disks, volume health, disk-to-volume mapping |
+| **Encryption** | OS and data volume state, protection status, % encrypted, cipher strength (XTS-AES-256 vs weaker), key protector quality (TPM+PIN > TPM > password), recovery key, auto-unlock. Falls back from the BitLocker cmdlets to the Device Encryption WMI provider (so it works on Home), then to detecting third-party FDE |
+| **Antivirus** | Whether *some* real-time AV is on and up to date, from Windows Security Center. Passive Defender behind a healthy third-party AV passes |
+| **Virtualisation security** | VBS, Memory Integrity / HVCI, Credential Guard, Secure Launch, kernel-mode stack protection |
+| **Credential protection** | LSA protection, read from the protection level LSASS is actually running with. Falls back to the WinInit boot event, then the `RunAsPPL` setting |
+| **Defender** | Running mode, real-time and behaviour monitoring, download scanning, signature age, Tamper Protection |
+| **Network** | Firewall profiles (each scored separately), SMBv1, SMB signing, guest logons, RDP + NLA |
+| **Privilege** | UAC, admin elevation prompt, Secure Desktop |
+| **Diagnostics** | Uptime, system drive free space, latest installed update. Shown for triage, not scored |
 
-Sentinel deliberately separates **physical disks → pools → virtual disks → volumes → BitLocker**, so
-pooled, spanned, JBOD or Storage Spaces layouts aren't mistaken for one-disk-per-drive-letter.
+Storage is mapped disk → pool → virtual disk → volume → BitLocker, so pooled or spanned layouts
+aren't mistaken for one disk per drive letter.
 
 ## Parameters
 
 | Parameter | Effect |
 |-----------|--------|
-| `-OutputDirectory <path>` | Where reports are written. Default: `.\WindowsSecurityAudit\` |
-| `-OpenReport` | Open the HTML dashboard in your browser when the scan finishes |
-| `-NoHtml` | Skip the HTML dashboard (still writes JSON / TXT / CSV) |
-| `-NoExport` | Console only — write no files at all |
-| `-Quiet` | Suppress the console report |
-| `-PassThru` | Return the structured report object to the pipeline |
+| `-OutputDirectory <path>` | Where reports go. Default: a `WindowsSecurityAudit` folder next to the script |
+| `-OpenReport` | Open the HTML dashboard when the scan finishes |
+| `-NoHtml` | Skip the dashboard (JSON, TXT and CSV are still written) |
+| `-NoExport` | Console only, no files |
+| `-Quiet` | No console report |
+| `-PassThru` | Return the report object to the pipeline |
 
 ```powershell
-# scan, open the dashboard, and pull every failure into the pipeline
 $audit = .\WindowsSecurityAudit.ps1 -OpenReport -PassThru
 $audit.Checks | Where-Object Status -eq 'FAIL'
 ```
 
-## Audit a remote Windows host
+## Audit another machine
 
-Run `Invoke-SentinelRemote.ps1` from the same folder as the audit script.
-It collects an audit from one Windows host and returns the structured report to your local
-PowerShell session. Use `-HtmlPath` to save the dashboard locally.
+`Invoke-SentinelRemote.ps1` runs the audit on a remote Windows host and gives you the report
+locally. Nothing is copied to or left on the target. The script is streamed over the connection
+and run in memory.
 
 ```powershell
-# Domain Windows client with an existing Kerberos WinRM endpoint
-$audit = ./Invoke-SentinelRemote.ps1 -ComputerName workstation.example.com -HtmlPath ./audit.html
+# Domain-joined target, Kerberos over WinRM
+$audit = ./Invoke-SentinelRemote.ps1 -ComputerName pc01.corp.example.com -HtmlPath ./pc01.html
 
-# Workgroup host or IP with a trusted WinRM HTTPS certificate matching the target
+# Workgroup target or IP address: WinRM over HTTPS with a certificate your client trusts
 $audit = ./Invoke-SentinelRemote.ps1 -ComputerName 192.0.2.10 -UseSSL -Credential (Get-Credential)
 
-# Windows OpenSSH host or an alias in your SSH configuration
-$audit = ./Invoke-SentinelRemote.ps1 -SshHost admin@workstation.example.com -HtmlPath ./audit.html
+# Windows OpenSSH (works from PowerShell on Linux too)
+$audit = ./Invoke-SentinelRemote.ps1 -SshHost admin@pc01 -HtmlPath ./pc01.html
 $audit.Checks | Where-Object Status -in FAIL, WARN, UNKNOWN
 ```
 
-Use an existing WinRM or Windows OpenSSH endpoint and an account permitted to
-audit that host. SSH uses the system OpenSSH client, an already trusted host key
-and non-interactive authentication such as an SSH agent. It works from
-PowerShell on Linux and Windows. WinRM mode is intended for Windows clients.
-Full collection depends on the remote account's elevation. Treat saved reports
-as sensitive host inventory.
+A few things to know:
 
-The **Diagnostics** section includes uptime and last boot, system-drive free
-space, and the latest dated entry in the Windows hotfix inventory. These checks
-help triage machines without changing the posture score. Use your update
-management service for a full patch compliance assessment.
+- **WinRM** uses Kerberos, or HTTPS with full certificate validation. It won't fall back to
+  plain-HTTP NTLM or skip certificate checks. On a workgroup machine that means setting up an
+  HTTPS listener first.
+- **SSH** uses your system OpenSSH client, your existing `known_hosts` entry and key-based auth.
+  It never prompts and never accepts an unknown host key.
+- The audit runs in Windows PowerShell 5.1 on the target. Connect with an admin account or the
+  run will be INCOMPLETE.
 
 ## Compare two audits
 
@@ -148,124 +143,110 @@ $diff = ./Compare-SentinelReport.ps1 -Before ./before.json -After ./after.json
 $diff.Changes | Format-Table Category, Check, Change
 ```
 
-Use two JSON exports from the same computer. Sentinel reports improvements and
-deteriorations for observed PASS, WARN, and FAIL transitions. Changes involving
-UNKNOWN, added or removed checks, and evidence changes have their own labels.
-The score delta is available when the report and scoring versions, elevation,
-coverage and completeness match.
+Feed it two JSON reports from the same machine. Each check that moved is labelled `Improved`,
+`Deteriorated`, `Added`, `Removed`, `EvidenceChanged` or `AssessmentChanged`. You only get a score
+delta when the two runs are actually comparable: same report and scoring versions, same elevation,
+coverage and completeness. Otherwise `ScoreComparable` is false and the delta is left empty
+rather than misleading you.
 
 ## Output files
 
-Written to the output directory, stamped with hostname + timestamp:
+Written to the output directory, named by hostname and timestamp:
 
-- **`.html`** — the [Sentinel dashboard](docs/SENTINEL.md) (self-contained, shareable)
-- **`.json`** — the full structured report (`SchemaVersion 3.1`) for pipelines and diffing. Carries
-  `ScoringVersion`, `Score`, `Posture`, `Verdict`, `Coverage`, `Incomplete`, `HardFails` and `NotEvaluated` alongside
-  every check, so the console, the dashboard and any consumer all read the same verdict
-- **`.txt`** — a plain human-readable report
-- **`_checks.csv`** and per-domain CSVs (physical disks, pools, virtual disks, volumes, BitLocker, antivirus)
+- **`.html`**: the [dashboard](docs/SENTINEL.md). One file, no external resources, works offline.
+- **`.json`**: the full report, for scripts and for `Compare-SentinelReport`. Carries
+  `SentinelVersion`, `ScoringVersion`, `Score`, `Posture`, `Verdict`, `Coverage`, `Incomplete`,
+  `HardFails` and `NotEvaluated` next to every check, so the console, dashboard and any tooling
+  all show the same verdict.
+- **`.txt`**: a plain-text report.
+- **`_checks.csv`**, plus CSVs for disks, pools, virtual disks, volumes, BitLocker and AV products.
 
-## The integrity score
+## How the score works
 
-The score is **not** an average of pass/fail counts (that lets 20 healthy disks bury a disabled
-Secure Boot). It's a **risk-weighted, control-based model with hard-fail caps**, in the spirit of
-Microsoft Secure Score and FAIR-CAM: each genuine security control carries a *weight* (its share of
-the score) and, if critical, a *cap* (the highest score the machine may earn while that control is
-failing). Informational checks — disk/volume health, system inventory, AV product lists — carry **no
-weight** and never touch the score.
+It's not a count of passes. Twenty healthy disks shouldn't make up for Secure Boot being off.
+Each real security control has a **weight**. The critical ones also have a **cap**: the highest
+score the machine can get while that control is failing. Inventory and health checks carry no
+weight at all.
 
 ```
-outcome:  PASS → 1.0   WARN → 0.5   FAIL → 0.0   UNKNOWN → excluded
-base   = 100 × Σ(weight × outcome) / Σ(weight over known controls)
-score  = min(base, applicable control caps, 74 if incomplete)
+outcome:  PASS 1.0   WARN 0.5   FAIL 0.0   UNKNOWN excluded
+base   = 100 × Σ(weight × outcome) / Σ(weight of known controls)
+score  = min(base, caps of failing or unknown critical controls, 74 if incomplete)
 ```
 
-So an **unencrypted OS drive alone caps the whole machine at 35**, and an **unencrypted fixed data
-drive caps it at 65** — no number of healthy disks can rescue either. Caps stack by taking the
-minimum. Emphasis is on **theft + malware resilience**: encryption, Secure Boot, TPM, antivirus and
-the firewall dominate the weights.
+An unencrypted OS drive caps the machine at 35. An unencrypted fixed data drive caps it at 65.
+Caps stack, and the lowest one wins. Encryption, Secure Boot, TPM, AV and the firewall carry most
+of the weight, because theft and malware are what this is tuned for.
 
-**Blind spots are never passes.** Every required control that produces *no result at all* — a
-missing cmdlet, a skipped section, a provider that threw — is reported as **NOT EVALUATED**, counted
-against coverage, and if it's critical it applies its cap exactly as a failure would. A machine
-Sentinel couldn't inspect can never score as a machine it inspected and liked.
-
-The report lists each mounted fixed volume. The weakest observed data-volume result
-contributes once to the score at a fixed weight. A drive no
-encryption provider will report is marked **UNKNOWN**. An unknown or missing required control marks
-the score incomplete. An unknown critical control also applies its score cap.
+**Not knowing is not a pass.** A required control that returns nothing (a missing cmdlet, a
+provider that threw, a drive no encryption provider will report) is listed as **NOT EVALUATED**
+and counts against coverage. If it's a critical control it caps the score the same way a failure
+would. Any unknown required control, a coverage below 80% or a non-elevated run marks the result
+**INCOMPLETE**, which keeps it out of the two green bands.
 
 | Score | Band | Meaning |
 |-------|------|---------|
-| 90–100 | **HARDENED** | Strong. Remaining items are refinements. |
-| 75–89 | **FORTIFIED** | Solid baseline, a few gaps to close. |
-| 60–74 | **GUARDED** | Adequate, but core protections need attention. |
-| 40–59 | **EXPOSED** | Core protections missing — start with the FAILs. |
-| 20–39 | **AT RISK** | Critical protections off. A soft target. |
-| 0–19 | **CRITICAL** | Fundamental protections absent. |
+| 90–100 | **HARDENED** | Strong. What's left is polish. |
+| 75–89 | **FORTIFIED** | Solid baseline, a few gaps. |
+| 60–74 | **GUARDED** | Adequate, but core protections need work. |
+| 40–59 | **EXPOSED** | Core protections missing. Start with the FAILs. |
+| 20–39 | **AT RISK** | Critical protections off. |
+| 0–19 | **CRITICAL** | The basics aren't there. |
 
-**Coverage & INCOMPLETE.** Without elevation, Sentinel can't read BitLocker (and some Defender/TPM
-detail). Rather than pretend, it reports a **coverage %**, marks the band **INCOMPLETE**, and refuses
-the two green bands until you re-run as Administrator — a mostly-unreadable machine can never look
-hardened. (TPM *presence* and *version* are still detected without admin via the security-device
-enumeration, so a real TPM 2.0 is never mis-reported as missing.)
+The weights and caps are in the `$Map` table in `Get-PostureAssessment`, and the bands are in
+`Get-PostureBand`. They're a judgement call, so change them if your machines need something different.
 
-Domain, Private and Public firewall profiles each have independent coverage.
-Only critical controls impose individual caps. These include UAC and NLA when
-Remote Desktop is enabled. Firmware, TPM version, VBS, HVCI, Credential Guard
-and LSA protection are required observations. The score summarizes the checks in
-this rubric.
+## Requirements and safety
 
-Tune the weights and caps in the `$Map` table inside `Get-PostureAssessment`, and the bands in
-`Get-PostureBand`.
-
-## Requirements & safety
-
-- Windows 10 / 11 (and recent Server), **Windows PowerShell 5.1** or **PowerShell 7+**
-- **Read-only by design** — it performs no remediation and modifies nothing. Every write goes to
-  the output directory you control.
-- Reports describe your machine's security state. Treat them as sensitive; `.gitignore` already
-  keeps generated reports out of the repo.
+- Windows 10 / 11 or recent Windows Server, with **Windows PowerShell 5.1** or **PowerShell 7+**.
+- Remote audits: the target needs WinRM or Windows OpenSSH. The client needs PowerShell, plus the
+  OpenSSH client for SSH mode.
+- **Read-only.** The only thing it writes is the report files, into the output directory you choose.
+- Reports describe a real machine's weak spots. Treat them as sensitive. `.gitignore` already keeps
+  generated reports out of the repo.
 
 ## Tests
 
-The scoring model has regression tests, because the failure mode that matters here is subtle: a
-control that quietly stops counting, so an unprotected machine reports as a safe one.
+The failure that matters most here is a quiet one: a control stops counting, and an unprotected
+machine reports as a safe one. The tests are aimed at that.
 
 ```powershell
-.\tests\Test-Sentinel.ps1
+.\tests\Test-Sentinel.ps1     # scoring model: caps, blind spots, dilution, LSA state
+.\tests\Test-Compare.ps1      # report comparison
+.\tests\Test-HtmlReport.ps1   # hostile strings can't break out of the dashboard
+.\tests\Test-Collectors.ps1   # full audit on this machine, checks every export
 ```
 
-They load the real functions straight out of the script (no copies, no drift) and assert that
-informational checks can never inflate a score, that critical failures cap the machine, that a
-control producing *no result* is a blind spot rather than a pass, and that partial runs can never
-reach a green band. Exits non-zero on failure, so it can gate CI.
+They load the real functions out of the script rather than copies of them. CI runs all four on
+Windows PowerShell 5.1 and PowerShell 7. Both remote modes have also been run against real
+Windows 11 hardware. CI only syntax-checks them, because it has no remote host to connect to.
 
-## Limitations — please read before trusting a score
+## Limitations
 
-Sentinel is an opinionated **configuration posture snapshot**. Being honest about what it *can't*
-see matters more than the number it prints:
+Read these before trusting a number:
 
-- **It is not a malware scan, a penetration test, or a compliance audit.** A machine can score
-  HARDENED and still be compromised. Sentinel reads settings; it does not hunt for intruders.
-- **Run it elevated or don't trust the number.** Without admin, BitLocker and much Defender/TPM
-  detail simply cannot be read. Those runs are marked **INCOMPLETE** and clamped — by design.
-- **Third-party full-disk encryption cannot be verified.** Sentinel detects that VeraCrypt, ESET,
-  Sophos, Dell, McAfee etc. are *installed*, but cannot read their state. That reports as UNKNOWN —
-  deliberately under-crediting rather than over-crediting. Verify those manually.
-- **Dynamic / spanned volumes can't be encrypted by BitLocker at all**, and no provider will report
-  them. Sentinel flags them as blind spots; it cannot tell you whether the data is protected.
-- **The antivirus verdict decodes Windows Security Center's `productState`**, whose bit layout is
-  community-documented rather than officially specified. A non-standard vendor could be misread.
-- **Windows Server has no Security Center**, so the antivirus control lands UNKNOWN there.
-- **The weights and caps are a judgement call**, tuned for theft and malware resilience on
-  workstations and laptops. They are not a standard. A server, a kiosk or an air-gapped box
-  deserves a different table — it's one hashtable in `Get-PostureAssessment`, tune it.
-- **A score is a conversation starter, not a certificate.** Read the findings, not just the number.
+- **It's not a malware scan, a pen test or a compliance audit.** A HARDENED machine can still be
+  compromised. Sentinel reads configuration. It doesn't look for intruders.
+- **Run it elevated or don't trust the score.** Non-admin runs are marked INCOMPLETE and capped
+  for a reason.
+- **Third-party disk encryption can't be verified.** Sentinel can tell VeraCrypt, ESET, Sophos and
+  others are installed, but not whether they're protecting the drive. That shows as UNKNOWN. It
+  would rather under-credit than over-credit you.
+- **Dynamic or spanned volumes can't be BitLocker-encrypted**, and nothing reports on them. They
+  show up as blind spots.
+- **The AV verdict decodes Security Center's `productState`**, whose bit layout is
+  community-documented rather than official. An unusual vendor could be misread.
+- **Windows Server has no Security Center**, so the antivirus control is UNKNOWN there.
+- **The weights are tuned for workstations and laptops.** A server or kiosk probably wants a
+  different table.
 
-Found a case where it reports a machine as safer than it is? That's the bug class this project cares
-about most — please open an issue.
+If you find a case where Sentinel says a machine is safer than it really is, please open an issue.
+That's the kind of bug this project cares about most.
+
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md).
 
 ## License
 
-MIT — see [LICENSE](LICENSE). Provided as-is, with no warranty: see the limitations above.
+MIT, see [LICENSE](LICENSE). Provided as-is, with no warranty.

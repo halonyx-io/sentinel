@@ -9,6 +9,13 @@ try {
         throw 'Unexpected audit report.'
     }
     if (-not ($report.Checks | Where-Object Category -eq 'Collection')) { throw 'Collection checks missing.' }
+    $lsa = @($report.Checks | Where-Object {
+        $_.Category -eq 'Credential Protection' -and $_.Check -match '^LSA' -and $_.Status -ne 'INFO'
+    })
+    if ($lsa.Count -ne 1) { throw "Expected one scored LSA check, found $($lsa.Count)." }
+    if ($report.Administrator -and $lsa[0].Check -ne 'LSA protection (running state)') {
+        throw "An elevated run could not read the LSASS protection level: $($lsa[0].Details)"
+    }
     $json = @(Get-ChildItem -LiteralPath $temp -Filter '*.json')
     $html = @(Get-ChildItem -LiteralPath $temp -Filter '*.html')
     if ($json.Count -ne 1 -or $html.Count -ne 1) { throw 'Expected JSON and HTML reports.' }

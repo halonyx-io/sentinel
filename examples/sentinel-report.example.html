@@ -1,7 +1,4 @@
 <title>Sentinel Security Readout</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap">
 <style>
   :root{
     --bg:#08080f; --bg2:#0a0b16;
@@ -284,8 +281,8 @@
    ============================================================ */
 const REPORT = {
   "SchemaVersion": "3.1",
-  "GeneratedAt": "2026-09-15T01:30:42.4807279+08:00",
-  "ComputerName": "NX-RONIN-01",
+  "GeneratedAt": "2026-11-16T09:00:00+08:00",
+  "ComputerName": "SENTINEL-DEMO",
   "UserName": "operator",
   "Administrator": true,
   "Score": 35,
@@ -313,7 +310,7 @@ const REPORT = {
     "Warn": 2,
     "Fail": 2,
     "Unknown": 0,
-    "Info": 6
+    "Info": 9
   },
   "Checks": [
     {
@@ -587,6 +584,30 @@ const REPORT = {
       "Value": "Disabled",
       "Expected": "",
       "Details": ""
+    },
+    {
+      "Category": "Diagnostics",
+      "Check": "System uptime",
+      "Status": "INFO",
+      "Value": "3.2 days",
+      "Expected": "",
+      "Details": "Last boot: 2026-11-13T04:12:00+08:00"
+    },
+    {
+      "Category": "Diagnostics",
+      "Check": "System drive free space",
+      "Status": "INFO",
+      "Value": "C: 128.4 GiB free (25.1%)",
+      "Expected": "",
+      "Details": "Sentinel flags less than 5 GiB for maintenance."
+    },
+    {
+      "Category": "Diagnostics",
+      "Check": "Latest dated Windows hotfix",
+      "Status": "INFO",
+      "Value": "Example update (2026-11-10)",
+      "Expected": "",
+      "Details": "Synthetic inventory entry. Get-HotFix inventory is partial."
     }
   ],
   "Storage": {
@@ -596,7 +617,8 @@ const REPORT = {
     "Volumes": [],
     "BitLockerVolumes": []
   },
-  "AntivirusProducts": []
+  "AntivirusProducts": [],
+  "ScoringVersion": 2
 };
 
 /* ---------- ordering + helpers ---------- */

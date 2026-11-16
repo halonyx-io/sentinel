@@ -110,6 +110,12 @@ function New-Check {
 function Get-HealthyChecks {
     @(
         (New-Check 'Boot Security'        'Secure Boot'                    'PASS')
+        (New-Check 'Boot Security'        'Firmware boot mode'             'PASS')
+        (New-Check 'TPM'                  'TPM specification'             'PASS')
+        (New-Check 'Virtualisation Security' 'Virtualization Based Security' 'PASS')
+        (New-Check 'Virtualisation Security' 'Memory Integrity / HVCI'     'PASS')
+        (New-Check 'Virtualisation Security' 'Credential Guard'            'PASS')
+        (New-Check 'Credential Protection' 'LSA protected process configuration' 'PASS')
         (New-Check 'TPM'                  'TPM present'                    'PASS')
         (New-Check 'Firewall'             'Domain profile'                 'PASS')
         (New-Check 'Firewall'             'Private profile'                'PASS')
@@ -209,10 +215,16 @@ $Unknown = @(Get-HealthyChecks | Where-Object { $_.Check -ne 'OS volume C:' })
 $Unknown += (New-Check 'Encryption' 'OS volume C:' 'UNKNOWN')
 $UnknownResult = Get-PostureAssessment -Checks $Unknown -IsAdmin $true
 
-Assert-That 'an UNKNOWN critical control blocks the green bands' `
-    ($UnknownResult.Score -le 74 -and $UnknownResult.Incomplete) `
+Assert-That 'unknown OS encryption uses the same score cap as missing OS encryption' `
+    ($UnknownResult.Score -eq $BlindResult.Score -and $UnknownResult.Incomplete) `
     "got $($UnknownResult.Score)/$($UnknownResult.Band)"
 
+
+$UnknownUac = @(Get-HealthyChecks | Where-Object { $_.Check -ne 'User Account Control' })
+$UnknownUac += (New-Check 'Privilege Protection' 'User Account Control' 'UNKNOWN')
+$UnknownUacResult = Get-PostureAssessment -Checks $UnknownUac -IsAdmin $true
+Assert-That 'unknown required UAC prevents a green band even above the coverage threshold' `
+    ($UnknownUacResult.Coverage -ge 80 -and $UnknownUacResult.Score -le 74 -and $UnknownUacResult.Incomplete)
 
 # ---- 7. non-elevated runs are always INCOMPLETE and clamped ----
 $NotElevated = Get-PostureAssessment -Checks (Get-HealthyChecks) -IsAdmin $false
@@ -243,6 +255,28 @@ $WithInfoResult = Get-PostureAssessment -Checks $WithInfo -IsAdmin $true
 Assert-That 'INFO-status checks do not affect score or coverage' `
     ($WithInfoResult.Score -eq $Healthy.Score -and $WithInfoResult.Coverage -eq $Healthy.Coverage)
 
+
+$Partial = @(Get-HealthyChecks | Where-Object { $_.Check -notin @('Private profile', 'Public profile', 'Memory Integrity / HVCI') })
+$PartialResult = Get-PostureAssessment -Checks $Partial
+Assert-That 'a single firewall profile leaves two independently recorded gaps' `
+    (@($PartialResult.NotEvaluated | Where-Object Category -eq 'Firewall').Count -eq 2 -and $PartialResult.Score -le 55)
+Assert-That 'missing HVCI is recorded as a required gap' `
+    (@($PartialResult.NotEvaluated | Where-Object Control -eq 'Memory Integrity / HVCI').Count -eq 1)
+
+$MixedVolumes = @(Get-HealthyChecks) + @(
+    (New-Check 'Encryption' 'Data volume D:' 'WARN')
+    (New-Check 'Encryption' 'Data volume E:' 'PASS')
+)
+$MixedResult = Get-PostureAssessment -Checks $MixedVolumes
+$MoreVolumes = $MixedVolumes + @(1..20 | ForEach-Object { New-Check 'Encryption' "Data volume additional $_" 'PASS' })
+$MoreResult = Get-PostureAssessment -Checks $MoreVolumes
+Assert-That 'healthy data volumes cannot outweigh a warning on another volume' `
+    ($MixedResult.Score -lt 100 -and $MixedResult.Score -eq $MoreResult.Score)
+
+$Noncritical = @(Get-HealthyChecks) + (New-Check 'Defender' 'Signature age' 'FAIL')
+$NoncriticalResult = Get-PostureAssessment -Checks $Noncritical
+Assert-That 'noncritical failures reduce the score without appearing as hard failures' `
+    ($NoncriticalResult.Score -lt 100 -and $NoncriticalResult.HardFails.Count -eq 0)
 
 # ---- 10. every scoring entry is well-formed ----
 $Source = ($Ast.FindAll(

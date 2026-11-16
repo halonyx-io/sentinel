@@ -12,7 +12,7 @@
 
 **A read-only Windows hardening auditor that scores your box and hands you a cyberpunk report.**
 
-[![tests](https://github.com/zataraine/sentinel/actions/workflows/tests.yml/badge.svg)](https://github.com/zataraine/sentinel/actions/workflows/tests.yml)
+[![tests](https://github.com/halonyx-io/sentinel/actions/workflows/tests.yml/badge.svg)](https://github.com/halonyx-io/sentinel/actions/workflows/tests.yml)
 ![PowerShell](https://img.shields.io/badge/PowerShell-5.1%20%7C%207%2B-5391FE?logo=powershell&logoColor=white)
 ![Platform](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-0078D6?logo=windows&logoColor=white)
 ![Read only](https://img.shields.io/badge/mode-read--only-2fe38f)
@@ -111,13 +111,56 @@ $audit = .\WindowsSecurityAudit.ps1 -OpenReport -PassThru
 $audit.Checks | Where-Object Status -eq 'FAIL'
 ```
 
+## Audit a remote Windows host
+
+Run `Invoke-SentinelRemote.ps1` from the same folder as the audit script.
+It collects an audit from one Windows host and returns the structured report to your local
+PowerShell session. Use `-HtmlPath` to save the dashboard locally.
+
+```powershell
+# Domain Windows client with an existing Kerberos WinRM endpoint
+$audit = ./Invoke-SentinelRemote.ps1 -ComputerName workstation.example.com -HtmlPath ./audit.html
+
+# Workgroup host or IP with a trusted WinRM HTTPS certificate matching the target
+$audit = ./Invoke-SentinelRemote.ps1 -ComputerName 192.0.2.10 -UseSSL -Credential (Get-Credential)
+
+# Windows OpenSSH host or an alias in your SSH configuration
+$audit = ./Invoke-SentinelRemote.ps1 -SshHost admin@workstation.example.com -HtmlPath ./audit.html
+$audit.Checks | Where-Object Status -in FAIL, WARN, UNKNOWN
+```
+
+Use an existing WinRM or Windows OpenSSH endpoint and an account permitted to
+audit that host. SSH uses the system OpenSSH client, an already trusted host key
+and non-interactive authentication such as an SSH agent. It works from
+PowerShell on Linux and Windows. WinRM mode is intended for Windows clients.
+Full collection depends on the remote account's elevation. Treat saved reports
+as sensitive host inventory.
+
+The **Diagnostics** section includes uptime and last boot, system-drive free
+space, and the latest dated entry in the Windows hotfix inventory. These checks
+help triage machines without changing the posture score. Use your update
+management service for a full patch compliance assessment.
+
+## Compare two audits
+
+```powershell
+$diff = ./Compare-SentinelReport.ps1 -Before ./before.json -After ./after.json
+$diff.Changes | Format-Table Category, Check, Change
+```
+
+Use two JSON exports from the same computer. Sentinel reports improvements and
+deteriorations for observed PASS, WARN, and FAIL transitions. Changes involving
+UNKNOWN, added or removed checks, and evidence changes have their own labels.
+The score delta is available when the report and scoring versions, elevation,
+coverage and completeness match.
+
 ## Output files
 
 Written to the output directory, stamped with hostname + timestamp:
 
 - **`.html`** — the [Sentinel dashboard](docs/SENTINEL.md) (self-contained, shareable)
 - **`.json`** — the full structured report (`SchemaVersion 3.1`) for pipelines and diffing. Carries
-  `Score`, `Posture`, `Verdict`, `Coverage`, `Incomplete`, `HardFails` and `NotEvaluated` alongside
+  `ScoringVersion`, `Score`, `Posture`, `Verdict`, `Coverage`, `Incomplete`, `HardFails` and `NotEvaluated` alongside
   every check, so the console, the dashboard and any consumer all read the same verdict
 - **`.txt`** — a plain human-readable report
 - **`_checks.csv`** and per-domain CSVs (physical disks, pools, virtual disks, volumes, BitLocker, antivirus)
@@ -134,7 +177,7 @@ weight** and never touch the score.
 ```
 outcome:  PASS → 1.0   WARN → 0.5   FAIL → 0.0   UNKNOWN → excluded
 base   = 100 × Σ(weight × outcome) / Σ(weight over known controls)
-score  = min(base, lowest Cap among all FAILING critical controls)
+score  = min(base, applicable control caps, 74 if incomplete)
 ```
 
 So an **unencrypted OS drive alone caps the whole machine at 35**, and an **unencrypted fixed data
@@ -147,10 +190,10 @@ missing cmdlet, a skipped section, a provider that threw — is reported as **NO
 against coverage, and if it's critical it applies its cap exactly as a failure would. A machine
 Sentinel couldn't inspect can never score as a machine it inspected and liked.
 
-That applies per-volume too: **every mounted fixed volume is scored individually**. A drive no
-encryption provider will report — a spanned/striped *dynamic* volume, for instance, which BitLocker
-physically cannot encrypt — is an UNKNOWN that drags coverage down and blocks a green verdict,
-rather than quietly vanishing from the score.
+The report lists each mounted fixed volume. The weakest observed data-volume result
+contributes once to the score at a fixed weight. A drive no
+encryption provider will report is marked **UNKNOWN**. An unknown or missing required control marks
+the score incomplete. An unknown critical control also applies its score cap.
 
 | Score | Band | Meaning |
 |-------|------|---------|
@@ -166,6 +209,12 @@ detail). Rather than pretend, it reports a **coverage %**, marks the band **INCO
 the two green bands until you re-run as Administrator — a mostly-unreadable machine can never look
 hardened. (TPM *presence* and *version* are still detected without admin via the security-device
 enumeration, so a real TPM 2.0 is never mis-reported as missing.)
+
+Domain, Private and Public firewall profiles each have independent coverage.
+Only critical controls impose individual caps. These include UAC and NLA when
+Remote Desktop is enabled. Firmware, TPM version, VBS, HVCI, Credential Guard
+and LSA protection are required observations. The score summarizes the checks in
+this rubric.
 
 Tune the weights and caps in the `$Map` table inside `Get-PostureAssessment`, and the bands in
 `Get-PostureBand`.

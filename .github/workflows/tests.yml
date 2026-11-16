@@ -8,7 +8,7 @@ on:
 
 jobs:
   scoring:
-    name: Scoring regression tests
+    name: Scoring, reports and Windows collectors
     runs-on: windows-latest
 
     steps:
@@ -17,24 +17,31 @@ jobs:
       - name: Syntax check
         shell: pwsh
         run: |
-          $errors = $null
-          [void][System.Management.Automation.Language.Parser]::ParseFile(
-            (Resolve-Path './WindowsSecurityAudit.ps1'), [ref]$null, [ref]$errors)
-          if ($errors.Count -gt 0) {
-            $errors | ForEach-Object {
-              Write-Host "L$($_.Extent.StartLineNumber): $($_.Message)"
+          foreach ($file in @('./WindowsSecurityAudit.ps1', './Invoke-SentinelRemote.ps1', './Compare-SentinelReport.ps1')) {
+            $errors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile(
+              (Resolve-Path $file), [ref]$null, [ref]$errors)
+            if ($errors.Count -gt 0) {
+              $errors | ForEach-Object {
+                Write-Host "${file}:$($_.Extent.StartLineNumber): $($_.Message)"
+              }
+              exit 1
             }
-            exit 1
+            Write-Host "Parsed $file."
           }
-          Write-Host 'Parsed clean.'
 
-      # The audit itself needs real hardware (TPM, BitLocker, Security Center)
-      # so it is not meaningful on a runner. The scoring model is the part that
-      # must never regress, and that is pure logic - so that is what is gated.
-      - name: Scoring tests (PowerShell 7)
+      # Collector smoke tests validate the report contract independently of
+      # the protections and hardware configured on the runner.
+      - name: Audit checks (PowerShell 7)
         shell: pwsh
-        run: ./tests/Test-Sentinel.ps1
+        run: |
+          ./tests/Test-Sentinel.ps1
+          ./tests/Test-Compare.ps1
+          ./tests/Test-Collectors.ps1
 
-      - name: Scoring tests (Windows PowerShell 5.1)
+      - name: Audit checks (Windows PowerShell 5.1)
         shell: powershell
-        run: ./tests/Test-Sentinel.ps1
+        run: |
+          ./tests/Test-Sentinel.ps1
+          ./tests/Test-Compare.ps1
+          ./tests/Test-Collectors.ps1

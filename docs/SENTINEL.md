@@ -33,8 +33,8 @@ attention reads instantly.
   `FAIL` / `WARN` (anything with detail) to expand the finding — including what was *expected*.
 - **Filter bar** — ALL / FAIL / WARN / PASS / INFO / UNKNOWN.
 
-Everything is keyboard-navigable, respects `prefers-reduced-motion`, and degrades to system fonts if
-Google Fonts can't load (offline, air-gapped, locked-down network — still works).
+The dashboard supports keyboard navigation and respects `prefers-reduced-motion`. It uses
+installed fonts with system fallbacks and works offline.
 
 ## How the data gets in
 

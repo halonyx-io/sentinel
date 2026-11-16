@@ -989,10 +989,10 @@ function Get-PostureAssessment {
     # Name = human label used in the NOT EVALUATED report.
     $Map = @(
         @{ Cat = 'Boot Security';           Pat = '^Secure Boot$';                   W = 12; Cap = 55;  Crit = $true;  Req = $true;  Name = 'Secure Boot' }
-        @{ Cat = 'Boot Security';           Pat = '^Firmware boot mode$';            W = 2;  Cap = 100; Crit = $false; Req = $false; Name = 'Firmware boot mode' }
+        @{ Cat = 'Boot Security';           Pat = '^Firmware boot mode$';            W = 2;  Cap = 100; Crit = $false; Req = $true; Name = 'Firmware boot mode' }
 
         @{ Cat = 'TPM';                     Pat = '^TPM present$';                   W = 6;  Cap = 70;  Crit = $true;  Req = $true;  Name = 'TPM present' }
-        @{ Cat = 'TPM';                     Pat = '^TPM specification$';             W = 2;  Cap = 100; Crit = $false; Req = $false; Name = 'TPM specification' }
+        @{ Cat = 'TPM';                     Pat = '^TPM specification$';             W = 2;  Cap = 100; Crit = $false; Req = $true; Name = 'TPM specification' }
         @{ Cat = 'TPM';                     Pat = '^TPM ready$';                     W = 2;  Cap = 100; Crit = $false; Req = $false; Name = 'TPM ready' }
 
         @{ Cat = 'Encryption';              Pat = '^OS volume';                      W = 20; Cap = 35;  Crit = $true;  Req = $true;  Name = 'OS drive encryption' }
@@ -1002,11 +1002,11 @@ function Get-PostureAssessment {
 
         @{ Cat = 'Antivirus';               Pat = '^Real-time antivirus protection$'; W = 8; Cap = 50;  Crit = $true;  Req = $true;  Name = 'Real-time antivirus' }
 
-        @{ Cat = 'Virtualisation Security'; Pat = '^Virtualization Based Security$'; W = 4;  Cap = 100; Crit = $false; Req = $false; Name = 'VBS' }
-        @{ Cat = 'Virtualisation Security'; Pat = '^Memory Integrity';               W = 5;  Cap = 100; Crit = $false; Req = $false; Name = 'Memory Integrity / HVCI' }
-        @{ Cat = 'Virtualisation Security'; Pat = '^Credential Guard$';              W = 4;  Cap = 100; Crit = $false; Req = $false; Name = 'Credential Guard' }
+        @{ Cat = 'Virtualisation Security'; Pat = '^Virtualization Based Security$'; W = 4;  Cap = 100; Crit = $false; Req = $true; Name = 'VBS' }
+        @{ Cat = 'Virtualisation Security'; Pat = '^Memory Integrity';               W = 5;  Cap = 100; Crit = $false; Req = $true; Name = 'Memory Integrity / HVCI' }
+        @{ Cat = 'Virtualisation Security'; Pat = '^Credential Guard$';              W = 4;  Cap = 100; Crit = $false; Req = $true; Name = 'Credential Guard' }
 
-        @{ Cat = 'Credential Protection';   Pat = '^LSA';                            W = 5;  Cap = 100; Crit = $false; Req = $false; Name = 'LSA protection' }
+        @{ Cat = 'Credential Protection';   Pat = '^LSA';                            W = 5;  Cap = 100; Crit = $false; Req = $true; Name = 'LSA protection' }
 
         @{ Cat = 'Defender';                Pat = '^Real-time protection$';          W = 3;  Cap = 100; Crit = $false; Req = $false; Name = 'Defender real-time' }
         @{ Cat = 'Defender';                Pat = '^Behaviour monitoring$';          W = 2;  Cap = 100; Crit = $false; Req = $false; Name = 'Behaviour monitoring' }
@@ -1015,17 +1015,19 @@ function Get-PostureAssessment {
         @{ Cat = 'Defender';                Pat = '^Network Inspection System$';     W = 1;  Cap = 100; Crit = $false; Req = $false; Name = 'Network Inspection System' }
         @{ Cat = 'Defender';                Pat = '^Signature age$';                 W = 2;  Cap = 100; Crit = $false; Req = $false; Name = 'Signature age' }
 
-        @{ Cat = 'Firewall';                Pat = 'profile$';                        W = 3;  Cap = 55;  Crit = $true;  Req = $true;  Name = 'Firewall profiles' }
+        @{ Cat = 'Firewall';                Pat = '^Domain profile$';                        W = 1;  Cap = 55;  Crit = $true;  Req = $true;  Name = 'Domain firewall profile' }
+        @{ Cat = 'Firewall';                Pat = '^Private profile$';                        W = 1;  Cap = 55;  Crit = $true;  Req = $true;  Name = 'Private firewall profile' }
+        @{ Cat = 'Firewall';                Pat = '^Public profile$';                        W = 1;  Cap = 55;  Crit = $true;  Req = $true;  Name = 'Public firewall profile' }
 
         @{ Cat = 'SMB Security';            Pat = '^SMBv1';                          W = 5;  Cap = 60;  Crit = $true;  Req = $true;  Name = 'SMBv1 disabled' }
         @{ Cat = 'SMB Security';            Pat = 'signing required$';               W = 2;  Cap = 100; Crit = $false; Req = $false; Name = 'SMB signing' }
         @{ Cat = 'SMB Security';            Pat = 'guest logons$';                   W = 2;  Cap = 100; Crit = $false; Req = $false; Name = 'SMB guest logons' }
 
-        @{ Cat = 'Privilege Protection';    Pat = '^User Account Control$';          W = 4;  Cap = 60;  Crit = $false; Req = $true;  Name = 'UAC' }
+        @{ Cat = 'Privilege Protection';    Pat = '^User Account Control$';          W = 4;  Cap = 60;  Crit = $true; Req = $true;  Name = 'UAC' }
         @{ Cat = 'Privilege Protection';    Pat = '^Admin elevation';               W = 2;  Cap = 100; Crit = $false; Req = $false; Name = 'Admin elevation policy' }
         @{ Cat = 'Privilege Protection';    Pat = 'Secure Desktop$';                 W = 2;  Cap = 100; Crit = $false; Req = $false; Name = 'Secure Desktop' }
 
-        @{ Cat = 'Remote Access';           Pat = 'Network Level Authentication$';   W = 4;  Cap = 60;  Crit = $false; Req = $false; Name = 'RDP NLA' }
+        @{ Cat = 'Remote Access';           Pat = 'Network Level Authentication$';   W = 4;  Cap = 60;  Crit = $true; Req = $false; Name = 'RDP NLA' }
 
         @{ Cat = 'System';                  Pat = '^Pending reboot$';                W = 1;  Cap = 100; Crit = $false; Req = $false; Name = 'Pending reboot' }
     )
@@ -1036,92 +1038,62 @@ function Get-PostureAssessment {
     $Avail = 0.0
     $WeightTotal = 0.0
     $WeightKnown = 0.0
-    $CriticalUnknown = $false
+    $RequiredOrCriticalUnknown = $false
 
     # Use ::new() rather than New-Object: on PowerShell 7.6 a generic List built
     # via New-Object breaks the @() array operator ("Argument types do not match").
     $Caps = [System.Collections.Generic.List[int]]::new()
     $HardFails = [System.Collections.Generic.List[object]]::new()
 
-    # Tracks which map entries were actually exercised by a real check, so an
-    # absent control can be told apart from a passing one.
-    $Assessed = @{}
-
-    foreach ($Check in $Checks) {
-
-        $Entry = $null
-        $Index = -1
-        for ($i = 0; $i -lt $Map.Count; $i++) {
-            if ($Check.Category -eq $Map[$i].Cat -and $Check.Check -match $Map[$i].Pat) {
-                $Entry = $Map[$i]
-                $Index = $i
-                break
-            }
-        }
-
-        if ($null -eq $Entry) { continue }
-
-        $W = [double]$Entry.W
-        if ($W -le 0) { continue }
-
-        if ($Check.Status -eq 'UNKNOWN') {
-            $Assessed[$Index] = $true
-            $WeightTotal += $W
-            if ($Entry.Crit) { $CriticalUnknown = $true }
-            continue
-        }
-
-        # INFO (or any non-scored status) is ignored entirely - it must not
-        # count toward the coverage denominator or the score, and it does NOT
-        # count as having assessed the control.
-        if (-not $Outcome.ContainsKey($Check.Status)) { continue }
-
-        $Assessed[$Index] = $true
-        $WeightTotal += $W
-        $WeightKnown += $W
-        $Avail += $W
-        $Earned += $W * $Outcome[$Check.Status]
-
-        if ($Check.Status -eq 'FAIL') {
-            $Caps.Add([int]$Entry.Cap)
-            $HardFails.Add(
-                [PSCustomObject]@{
-                    Category = $Check.Category
-                    Check    = $Check.Check
-                    Cap      = [int]$Entry.Cap
-                    Critical = [bool]$Entry.Crit
-                }
-            )
-        }
-    }
-
-    # ---- BLIND SPOTS -------------------------------------------------------
-    # Any REQUIRED control that produced no usable check was never assessed.
-    # Treat it as an unknown risk, never as a pass: it counts against coverage,
-    # is reported explicitly, and if critical it applies its cap like a failure.
     $NotEvaluated = [System.Collections.Generic.List[object]]::new()
 
-    for ($i = 0; $i -lt $Map.Count; $i++) {
+    foreach ($Entry in $Map) {
+        $Observed = @($Checks | Where-Object {
+            $_.Category -eq $Entry.Cat -and $_.Check -match $Entry.Pat -and
+                ($_.Status -eq 'UNKNOWN' -or $Outcome.ContainsKey($_.Status))
+        })
 
-        $M = $Map[$i]
-        if (-not $M.Req) { continue }
-        if ($Assessed.ContainsKey($i)) { continue }
+        if ($Observed.Count -eq 0) {
+            if (-not $Entry.Req) { continue }
+            $NotEvaluated.Add([PSCustomObject]@{
+                Control  = $Entry.Name
+                Category = $Entry.Cat
+                Weight   = $Entry.W
+                Critical = $Entry.Crit
+                Cap      = $Entry.Cap
+            })
+        }
 
-        $WeightTotal += [double]$M.W
+        $W = [double]$Entry.W
+        $WeightTotal += $W
+        $Known = @($Observed | Where-Object { $Outcome.ContainsKey($_.Status) })
+        $HasGap = $Observed.Count -eq 0 -or $Known.Count -lt $Observed.Count
+        if ($HasGap) {
+            if ($Entry.Req -or $Entry.Crit) { $RequiredOrCriticalUnknown = $true }
+            if ($Entry.Crit) { $Caps.Add([int]$Entry.Cap) }
+        }
+        else {
+            $WeightKnown += $W
+        }
 
-        $NotEvaluated.Add(
-            [PSCustomObject]@{
-                Control  = [string]$M.Name
-                Category = [string]$M.Cat
-                Weight   = [int]$M.W
-                Critical = [bool]$M.Crit
-                Cap      = [int]$M.Cap
+        # Score each control once using its weakest observed result.
+        # Per-volume and per-component observations remain in the report.
+        if ($Known.Count -gt 0) {
+            $Worst = ($Known | ForEach-Object { $Outcome[$_.Status] } | Measure-Object -Minimum).Minimum
+            $Avail += $W
+            $Earned += $W * $Worst
+        }
+
+        if ($Entry.Crit) {
+            foreach ($Check in $Known | Where-Object Status -eq 'FAIL') {
+                $Caps.Add([int]$Entry.Cap)
+                $HardFails.Add([PSCustomObject]@{
+                    Category = $Check.Category
+                    Check    = $Check.Check
+                    Cap      = $Entry.Cap
+                    Critical = $true
+                })
             }
-        )
-
-        if ($M.Crit) {
-            $CriticalUnknown = $true
-            $Caps.Add([int]$M.Cap)
         }
     }
 
@@ -1143,7 +1115,7 @@ function Get-PostureAssessment {
 
     $Incomplete = (
         (-not $IsAdmin) -or
-        $CriticalUnknown -or
+        $RequiredOrCriticalUnknown -or
         ($Coverage -lt 80)
     )
 
@@ -1305,9 +1277,6 @@ function New-HtmlReport {
 
     $Template = @'
 <title>Sentinel Security Readout</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap">
 <style>
   :root{
     --bg:#08080f; --bg2:#0a0b16;
@@ -1955,6 +1924,54 @@ catch {
         -Status 'UNKNOWN' `
         -Value 'Collection failed' `
         -Details $_.Exception.Message
+}
+
+
+# ============================================================================
+# SUPPORT DIAGNOSTICS
+# ============================================================================
+
+try {
+    if ($null -eq $OperatingSystem) { throw 'Windows operating system data is unavailable.' }
+    $boot = [datetime]$OperatingSystem.LastBootUpTime
+    $uptime = (Get-Date) - $boot
+    Add-Check -Category 'Diagnostics' -Name 'System uptime' -Status 'INFO' `
+        -Value ('{0:N1} days' -f $uptime.TotalDays) -Details ('Last boot: ' + $boot.ToString('o'))
+}
+catch {
+    Add-Check -Category 'Diagnostics' -Name 'System uptime' -Status 'UNKNOWN' `
+        -Value 'Collection failed' -Details $_.Exception.Message
+}
+
+try {
+    $systemDisk = Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DeviceID='$env:SystemDrive'" -ErrorAction Stop
+    if ($null -eq $systemDisk -or $null -eq $systemDisk.FreeSpace -or $systemDisk.Size -le 0) {
+        throw 'System volume size or free space is unavailable.'
+    }
+    $free = [double]$systemDisk.FreeSpace
+    $percent = 100 * $free / $systemDisk.Size
+    $status = if ($free -lt 5GB) { 'WARN' } else { 'INFO' }
+    Add-Check -Category 'Diagnostics' -Name 'System drive free space' -Status $status `
+        -Value ('{0}: {1:N1} GiB free ({2:N1}%)' -f $systemDisk.DeviceID, ($free / 1GB), $percent) `
+        -Details 'Sentinel flags less than 5 GiB for maintenance. This check does not affect the security score.'
+}
+catch {
+    Add-Check -Category 'Diagnostics' -Name 'System drive free space' -Status 'UNKNOWN' `
+        -Value 'Collection failed' -Details $_.Exception.Message
+}
+
+try {
+    $latestFix = Get-HotFix -ErrorAction Stop |
+        Where-Object { $_.InstalledOn -is [datetime] -and $_.InstalledOn -gt [datetime]::MinValue } |
+        Sort-Object InstalledOn -Descending | Select-Object -First 1
+    if ($null -eq $latestFix) { throw 'The hotfix inventory returned no dated entries.' }
+    Add-Check -Category 'Diagnostics' -Name 'Latest dated Windows hotfix' -Status 'INFO' `
+        -Value ('{0} ({1:yyyy-MM-dd})' -f $latestFix.HotFixID, $latestFix.InstalledOn) `
+        -Details 'Get-HotFix inventory is partial. Use your update management service to assess patch compliance.'
+}
+catch {
+    Add-Check -Category 'Diagnostics' -Name 'Latest dated Windows hotfix' -Status 'UNKNOWN' `
+        -Value 'Date unavailable' -Details $_.Exception.Message
 }
 
 
@@ -3843,9 +3860,9 @@ if (Test-CommandExists 'Get-BitLockerVolume') {
                 -Details 'XTS-AES-256 is recommended for OS and fixed drives; AES-CBC and 128-bit are weaker/legacy.'
 
 
-            $HasTpmProt = ($KeyProtectors | Where-Object { $_ -match 'Tpm' }).Count -gt 0
-            $HasPinProt = ($KeyProtectors | Where-Object { $_ -match 'Pin' }).Count -gt 0
-            $HasSecret  = ($KeyProtectors | Where-Object { $_ -match 'Password|ExternalKey|StartupKey' }).Count -gt 0
+            $HasTpmProt = @($KeyProtectors | Where-Object { $_ -match 'Tpm' }).Count -gt 0
+            $HasPinProt = @($KeyProtectors | Where-Object { $_ -match 'Pin' }).Count -gt 0
+            $HasSecret  = @($KeyProtectors | Where-Object { $_ -match 'Password|ExternalKey|StartupKey' }).Count -gt 0
 
             if ($KeyProtectors.Count -eq 0) {
                 $KPStatus = 'FAIL'
@@ -4250,7 +4267,7 @@ try {
         -Name 'Credential Guard' `
         -Configured $ConfiguredServices `
         -Running $RunningServices `
-        -NotConfiguredStatus 'INFO'
+        -NotConfiguredStatus 'WARN'
 
 
     Add-DeviceGuardServiceCheck `
@@ -5296,6 +5313,7 @@ $Report = [PSCustomObject]@{
     # 3.1 added the scoring fields: Score, Posture, Verdict, Coverage,
     # Incomplete, HardFails and NotEvaluated.
     SchemaVersion = '3.1'
+    ScoringVersion = 2
 
     GeneratedAt =
         (Get-Date).ToString('o')
